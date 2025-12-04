@@ -1,0 +1,31 @@
+plugins {
+    id 'java'
+    id 'com.gradleup.shadow' version '9.2.2'
+}
+
+group = 'met.freehij.loader'
+version = '1.0.0-SNAPSHOT'
+
+repositories {
+    maven {
+        url "https://libraries.minecraft.net"
+    }
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.ow2.asm:asm:9.8'
+    implementation 'org.ow2.asm:asm-commons:9.8'
+}
+
+jar {
+    manifest {
+        attributes(
+                'Premain-Class': 'met.freehij.loader.Loader',
+                'Can-Redefine-Classes': true,
+                'Can-Retransform-Classes': true
+        )
+    }
+}
+
+tasks.build.dependsOn tasks.shadowJar
