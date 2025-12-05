@@ -1,4 +1,4 @@
-package met.freehij.loader.annotation;
+package io.github.freehij.loader.annotation;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;

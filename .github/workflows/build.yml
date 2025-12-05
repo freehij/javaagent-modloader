@@ -1,0 +1,30 @@
+steps:
+  - name: Checkout repository
+    uses: actions/checkout@v4
+
+  - name: Set up JDK 21
+    uses: actions/setup-java@v4
+    with:
+      java-version: '21'
+      distribution: 'temurin'
+      cache: 'gradle'
+
+  - name: Grant execute permission to gradlew
+    run: chmod +x gradlew
+
+  - name: Build with Gradle
+    run: ./gradlew build --no-daemon
+
+  - name: Find the primary build artifact (JAR/WAR)
+    id: find_artifact
+    run: |
+      ARTIFACT_PATH=$(find build/libs/ -type f -name "*.jar" -o -name "*.war" | head -n 1)
+      echo "artifact_path=$ARTIFACT_PATH" >> $GITHUB_OUTPUT
+
+  - name: Upload artifact to GitHub Release
+    if: steps.find_artifact.outputs.artifact_path != ''
+    uses: softprops/action-gh-release@v2
+    with:
+      files: ${{ steps.find_artifact.outputs.artifact_path }}
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

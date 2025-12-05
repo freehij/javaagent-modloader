@@ -1,4 +1,4 @@
-package met.freehij.loader.util;
+package io.github.freehij.loader.util;
 
 public class InjectionHelper {
     private final Object instance;

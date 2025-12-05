@@ -1,8 +1,8 @@
-package met.freehij.loader;
+package io.github.freehij.loader;
 
-import met.freehij.loader.annotation.Inject;
-import met.freehij.loader.annotation.EditClass;
-import met.freehij.loader.constant.At;
+import io.github.freehij.loader.annotation.Inject;
+import io.github.freehij.loader.annotation.EditClass;
+import io.github.freehij.loader.constant.At;
 import org.objectweb.asm.*;
 
 import java.io.*;
@@ -27,7 +27,7 @@ public class Loader {
     private static final List<URL> modUrls = new ArrayList<>();
 
     public static void premain(String args, Instrumentation inst) {
-        processInjectionClass("met/freehij/injections/KnotClassPathFixer",
+        processInjectionClass("io/github/freehij/injections/KnotClassPathFixer",
                 Thread.currentThread().getContextClassLoader());
         loadMods();
         System.out.println(Arrays.toString(mods.toArray()));
@@ -231,7 +231,7 @@ public class Loader {
     static void generateHelperCall(MethodVisitor mv, int access, String desc, InjectionPoint injection) {
         boolean isStatic = (access & Opcodes.ACC_STATIC) != 0;
 
-        mv.visitTypeInsn(Opcodes.NEW, "met/freehij/loader/util/InjectionHelper");
+        mv.visitTypeInsn(Opcodes.NEW, "io/github/freehij/loader/util/InjectionHelper");
         mv.visitInsn(Opcodes.DUP);
         if (isStatic) {
             mv.visitInsn(Opcodes.ACONST_NULL);
@@ -250,7 +250,7 @@ public class Loader {
             localIndex += args[i].getSize();
         }
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL,
-                "met/freehij/loader/util/InjectionHelper",
+                "io/github/freehij/loader/util/InjectionHelper",
                 "<init>",
                 "(Ljava/lang/Object;[Ljava/lang/Object;)V",
                 false);
@@ -260,12 +260,12 @@ public class Loader {
         mv.visitMethodInsn(Opcodes.INVOKESTATIC,
                 injection.handlerClass,
                 injection.handlerMethod,
-                "(Lmet/freehij/loader/util/InjectionHelper;)V",
+                "(Lio/github/freehij/loader/util/InjectionHelper;)V",
                 false);
         Label continueLabel = new Label();
         mv.visitVarInsn(Opcodes.ALOAD, 100);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
-                "met/freehij/loader/util/InjectionHelper", "isCancelled", "()Z", false);
+                "io/github/freehij/loader/util/InjectionHelper", "isCancelled", "()Z", false);
         mv.visitJumpInsn(Opcodes.IFEQ, continueLabel);
         Type returnType = Type.getReturnType(desc);
         if (returnType == Type.VOID_TYPE) {
@@ -273,7 +273,7 @@ public class Loader {
         } else {
             mv.visitVarInsn(Opcodes.ALOAD, 100);
             mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
-                    "met/freehij/loader/util/InjectionHelper", "getReturnValue", "()Ljava/lang/Object;", false);
+                    "io/github/freehij/loader/util/InjectionHelper", "getReturnValue", "()Ljava/lang/Object;", false);
             unbox(mv, returnType);
             mv.visitInsn(returnType.getOpcode(Opcodes.IRETURN));
         }

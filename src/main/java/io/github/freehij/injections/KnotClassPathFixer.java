@@ -1,9 +1,9 @@
-package met.freehij.injections;
+package io.github.freehij.injections;
 
-import met.freehij.loader.Loader;
-import met.freehij.loader.annotation.EditClass;
-import met.freehij.loader.annotation.Inject;
-import met.freehij.loader.util.InjectionHelper;
+import io.github.freehij.loader.Loader;
+import io.github.freehij.loader.annotation.EditClass;
+import io.github.freehij.loader.annotation.Inject;
+import io.github.freehij.loader.util.InjectionHelper;
 
 import java.net.URL;
 import java.nio.file.Path;

@@ -1,4 +1,4 @@
-package met.freehij.loader.constant;
+package io.github.freehij.loader.constant;
 
 public enum At {
     HEAD,
