@@ -3,61 +3,72 @@ package met.freehij.loader;
 import met.freehij.loader.annotation.Inject;
 import met.freehij.loader.annotation.EditClass;
 import met.freehij.loader.constant.At;
-import met.freehij.loader.util.InjectionHelper;
 import org.objectweb.asm.*;
 
 import java.io.*;
 import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.Instrumentation;
 import java.lang.reflect.Method;
-import java.net.JarURLConnection;
-import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.security.ProtectionDomain;
 import java.util.*;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
 public class Loader {
+    private static final System.Logger LOGGER = System.getLogger("loader");
     private static final Map<String, List<InjectionPoint>> injectionPoints = new HashMap<>();
-    private static final String INJECTION_PACKAGE = "met.freehij.injections";
+    private static final List<ModInfo> mods = new ArrayList<>();
+    private static final List<URL> modUrls = new ArrayList<>();
 
     public static void premain(String args, Instrumentation inst) {
-        scanForInjections();
+        processInjectionClass("met/freehij/injections/KnotClassPathFixer",
+                Thread.currentThread().getContextClassLoader());
+        loadMods();
+        System.out.println(Arrays.toString(mods.toArray()));
+        for (URL url : modUrls) {
+            try {
+                inst.appendToSystemClassLoaderSearch(new JarFile(url.getFile()));
+            } catch (IOException e) {
+                System.err.println("Failed to add mod JAR to System ClassLoader search path: " + url.toString());
+                e.printStackTrace();
+            }
+        }
+        scanInjections();
         inst.addTransformer(new MixinTransformer(), true);
     }
 
-    private static void scanForInjections() {
-        String packagePath = INJECTION_PACKAGE.replace('.', '/');
-        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
-
+    private static void loadMods() {
         try {
-            Enumeration<URL> resources = classLoader.getResources(packagePath);
-            while (resources.hasMoreElements()) {
-                URL resource = resources.nextElement();
-                if (resource.getProtocol().equals("jar")) {
-                    processJarResource(resource, packagePath, classLoader);
-                } else {
-                    processFileResource(resource, classLoader);
-                }
+            Path modsDir = Paths.get("mods");
+            if (!Files.exists(modsDir)) {
+                Files.createDirectories(modsDir);
             }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
 
-    private static void processJarResource(URL jarUrl, String packagePath, ClassLoader classLoader) {
-        try {
-            JarURLConnection jarConnection = (JarURLConnection) jarUrl.openConnection();
-            try (JarFile jar = jarConnection.getJarFile()) {
-                Enumeration<JarEntry> entries = jar.entries();
-                while (entries.hasMoreElements()) {
-                    JarEntry entry = entries.nextElement();
-                    String name = entry.getName();
-                    if (name.startsWith(packagePath) && name.endsWith(".class") && !entry.isDirectory()) {
-                        String className = name.replace('/', '.').substring(0, name.length() - 6);
-                        processInjectionClass(className, classLoader);
+            try (DirectoryStream<Path> stream = Files.newDirectoryStream(modsDir, "*.{jar,zip}")) {
+                for (Path jarPath : stream) {
+                    try (JarFile jar = new JarFile(jarPath.toFile())) {
+                        JarEntry config = jar.getJarEntry("mod.properties");
+                        if (config == null) continue;
+
+                        Properties props = new Properties();
+                        props.load(jar.getInputStream(config));
+
+                        ModInfo mod = new ModInfo(
+                                props.getProperty("modid"),
+                                props.getProperty("name"),
+                                props.getProperty("version"),
+                                props.getProperty("creator"),
+                                Arrays.asList(props.getProperty("injections", "").split(",")),
+                                jarPath
+                        );
+                        mods.add(mod);
+                        modUrls.add(jarPath.toUri().toURL());
                     }
                 }
             }
@@ -66,26 +77,28 @@ public class Loader {
         }
     }
 
-    private static void processFileResource(URL fileUrl, ClassLoader classLoader) {
-        try {
-            File dir = new File(fileUrl.toURI());
-            if (!dir.isDirectory()) return;
-
-            for (File file : dir.listFiles()) {
-                if (file.isFile() && file.getName().endsWith(".class")) {
-                    String className = INJECTION_PACKAGE + '.' + file.getName().replace(".class", "");
-                    processInjectionClass(className, classLoader);
+    private static void scanInjections() {
+        URL[] urls = modUrls.toArray(new URL[0]);
+        try (URLClassLoader modLoader = new URLClassLoader(urls, Thread.currentThread().getContextClassLoader())) {
+            for (ModInfo mod : mods) {
+                for (String className : mod.injections) {
+                    if (className.isEmpty()) continue;
+                    processInjectionClass(className, modLoader);
                 }
             }
-        } catch (URISyntaxException e) {
+        } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
-    private static void processInjectionClass(String className, ClassLoader classLoader) {
+    private static void processInjectionClass(String className, ClassLoader loader) {
         try {
-            Class<?> clazz = classLoader.loadClass(className);
-            System.out.println(className);
+            // need to replace class loading with bytecode analysis
+            // because of recursive class loading
+            // without that there are ain't no REAL fabric support
+            // without direct having direct reference i'm just forced to use reflector (reflector sucks ngl)
+            // :(
+            Class<?> clazz = Class.forName(className.replace("/", "."), false, loader);
             EditClass injection = clazz.getAnnotation(EditClass.class);
             if (injection == null) return;
 
@@ -103,21 +116,27 @@ public class Loader {
                                 method.getName()
                         ));
             }
-        } catch (ClassNotFoundException ignored) {
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
         }
     }
 
-    record InjectionPoint(String targetClass, String methodName, String descriptor, At location, String handlerClass,
-                          String handlerMethod) {
+    public static List<URL> getModUrls() {
+        return Collections.unmodifiableList(modUrls);
     }
+
+    record ModInfo(String id, String name, String version, String creator,
+                   List<String> injections, Path jarPath) { }
+
+    record InjectionPoint(String targetClass, String methodName, String descriptor, At location, String handlerClass,
+                          String handlerMethod) { }
 
     static class MixinTransformer implements ClassFileTransformer {
         @Override
         public byte[] transform(ClassLoader l, String className, Class<?> c,
                                 ProtectionDomain d, byte[] buffer) {
             if (!injectionPoints.containsKey(className)) return null;
-            System.out.println(className + ", loader: " + l.getName());
-
+            LOGGER.log(System.Logger.Level.DEBUG, className + ", loader: " + l.getName());
             ClassReader cr = new ClassReader(buffer);
             ClassWriter cw = new ClassWriter(cr, ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
             cr.accept(new InjectionClassVisitor(cw, className), 0);
@@ -139,10 +158,9 @@ public class Loader {
             MethodVisitor mv = super.visitMethod(access, name, desc, sig, ex);
             List<InjectionPoint> points = injectionPoints.get(className);
             if (points == null) return mv;
-
             for (InjectionPoint point : points) {
                 if (point.methodName.equals(name) && point.descriptor.equals(desc)) {
-                    System.out.println(name + desc);
+                    LOGGER.log(System.Logger.Level.DEBUG, name + desc);
                     mv = new InjectionMethodVisitor(mv, access, desc, point);
                 }
             }
@@ -215,39 +233,52 @@ public class Loader {
 
         mv.visitTypeInsn(Opcodes.NEW, "met/freehij/loader/util/InjectionHelper");
         mv.visitInsn(Opcodes.DUP);
-
         if (isStatic) {
             mv.visitInsn(Opcodes.ACONST_NULL);
         } else {
             mv.visitVarInsn(Opcodes.ALOAD, 0);
         }
-
         Type[] args = Type.getArgumentTypes(desc);
         mv.visitIntInsn(Opcodes.BIPUSH, args.length);
         mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
-
         int localIndex = isStatic ? 0 : 1;
         for (int i = 0; i < args.length; i++) {
             mv.visitInsn(Opcodes.DUP);
             mv.visitIntInsn(Opcodes.BIPUSH, i);
-
             loadAndBoxArgument(mv, localIndex, args[i]);
-
             mv.visitInsn(Opcodes.AASTORE);
             localIndex += args[i].getSize();
         }
-
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL,
                 "met/freehij/loader/util/InjectionHelper",
                 "<init>",
                 "(Ljava/lang/Object;[Ljava/lang/Object;)V",
                 false);
 
+        mv.visitVarInsn(Opcodes.ASTORE, 100);
+        mv.visitVarInsn(Opcodes.ALOAD, 100);
         mv.visitMethodInsn(Opcodes.INVOKESTATIC,
                 injection.handlerClass,
                 injection.handlerMethod,
                 "(Lmet/freehij/loader/util/InjectionHelper;)V",
                 false);
+        Label continueLabel = new Label();
+        mv.visitVarInsn(Opcodes.ALOAD, 100);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                "met/freehij/loader/util/InjectionHelper", "isCancelled", "()Z", false);
+        mv.visitJumpInsn(Opcodes.IFEQ, continueLabel);
+        Type returnType = Type.getReturnType(desc);
+        if (returnType == Type.VOID_TYPE) {
+            mv.visitInsn(Opcodes.RETURN);
+        } else {
+            mv.visitVarInsn(Opcodes.ALOAD, 100);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                    "met/freehij/loader/util/InjectionHelper", "getReturnValue", "()Ljava/lang/Object;", false);
+            unbox(mv, returnType);
+            mv.visitInsn(returnType.getOpcode(Opcodes.IRETURN));
+        }
+        mv.visitLabel(continueLabel);
+        mv.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
     }
 
     private static void loadAndBoxArgument(MethodVisitor mv, int index, Type type) {
@@ -266,5 +297,21 @@ public class Loader {
 
     private static void box(MethodVisitor mv, String owner, String descriptor) {
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "valueOf", descriptor, false);
+    }
+
+    private static void unbox(MethodVisitor mv, Type type) {
+        String className = type.getClassName().replace(".", "/");
+        String[] method = {"booleanValue", "byteValue", "charValue", "shortValue",
+                "intValue", "floatValue", "longValue", "doubleValue"};
+        String[] desc = {"()Z", "()B", "()C", "()S", "()I", "()F", "()J", "()D"};
+
+        int sort = type.getSort();
+        if (sort >= Type.BOOLEAN && sort <= Type.DOUBLE) {
+            mv.visitTypeInsn(Opcodes.CHECKCAST, className);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, className,
+                    method[sort - Type.BOOLEAN], desc[sort - Type.BOOLEAN], false);
+        } else if (sort == Type.ARRAY || sort == Type.OBJECT) {
+            mv.visitTypeInsn(Opcodes.CHECKCAST, type.getInternalName());
+        }
     }
 }
