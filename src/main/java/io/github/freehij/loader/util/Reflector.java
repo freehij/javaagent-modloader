@@ -115,22 +115,34 @@ public class Reflector {
         //throws Exception if method is not static and no object instance is presented
         //throws RuntimeException when other errors occur
         try {
-            Method method = clazz.getDeclaredMethod(methodName, paramTypes);
-            method.setAccessible(true);
+            Class<?> searchClass = this.clazz;
+            Method method = null;
 
+            while (searchClass != null && method == null) {
+                try {
+                    method = searchClass.getDeclaredMethod(methodName, paramTypes);
+                } catch (NoSuchMethodException e) {
+                    searchClass = searchClass.getSuperclass();
+                }
+            }
+
+            if (method == null) {
+                throw new NoSuchMethodException("Method not found: " + methodName);
+            }
+
+            method.setAccessible(true);
             Object result;
-            if (object == null) {
+            if (this.object == null) {
                 if (!Modifier.isStatic(method.getModifiers())) {
                     throw new Exception("Not a static method: " + methodName);
                 }
-                result = method.invoke(null, args);
+                result = method.invoke((Object)null, args);
             } else {
-                result = method.invoke(object, args);
+                result = method.invoke(this.object, args);
             }
-
             return new Reflector(method.getReturnType(), result);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to invoke method: " + methodName, e);
+        } catch (Exception var6) {
+            throw new RuntimeException("Failed to invoke method: " + methodName, var6);
         }
     }
 

@@ -125,7 +125,11 @@ public class Loader {
         return Collections.unmodifiableList(modUrls);
     }
 
-    record ModInfo(String id, String name, String version, String creator,
+    public static List<ModInfo> getMods() {
+        return Collections.unmodifiableList(mods);
+    }
+
+    public record ModInfo(String id, String name, String version, String creator,
                    List<String> injections, Path jarPath) { }
 
     record InjectionPoint(String targetClass, String methodName, String descriptor, At location, String handlerClass,
