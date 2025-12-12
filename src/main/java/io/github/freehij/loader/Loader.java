@@ -93,31 +93,107 @@ public class Loader {
 
     private static void processInjectionClass(String className, ClassLoader loader) {
         try {
-            // need to replace class loading with bytecode analysis
-            // because of recursive class loading
-            // without that there are ain't no REAL fabric support
-            // without direct having direct reference i'm just forced to use reflector (reflector sucks ngl)
-            // :(
-            Class<?> clazz = Class.forName(className.replace("/", "."), false, loader);
-            EditClass injection = clazz.getAnnotation(EditClass.class);
-            if (injection == null) return;
-
-            for (Method method : clazz.getDeclaredMethods()) {
-                Inject inject = method.getAnnotation(Inject.class);
-                if (inject == null) continue;
-
-                injectionPoints.computeIfAbsent(injection.value(), k -> new ArrayList<>())
-                        .add(new InjectionPoint(
-                                injection.value(),
-                                inject.method(),
-                                inject.descriptor(),
-                                inject.at(),
-                                clazz.getName().replace('.', '/'),
-                                method.getName()
-                        ));
+            URL resource = loader.getResource(className + ".class");
+            if (resource == null) {
+                LOGGER.log(System.Logger.Level.WARNING, "Could not find injection class: " + className);
+                return;
             }
-        } catch (ClassNotFoundException e) {
-            e.printStackTrace();
+
+            try (InputStream classStream = resource.openStream()) {
+                ClassReader classReader = new ClassReader(classStream);
+
+                classReader.accept(new ClassVisitor(Opcodes.ASM9) {
+                    private String targetClass = null;
+                    private final List<InjectionPoint> points = new ArrayList<>();
+
+                    @Override
+                    public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
+                        if (descriptor.equals("Lio/github/freehij/loader/annotation/EditClass;")) {
+                            return new AnnotationVisitor(Opcodes.ASM9) {
+                                @Override
+                                public void visit(String name, Object value) {
+                                    if ("value".equals(name)) {
+                                        targetClass = (String) value;
+                                    }
+                                }
+                            };
+                        }
+                        return null;
+                    }
+
+                    @Override
+                    public MethodVisitor visitMethod(int access, String name, String descriptor,
+                                                     String signature, String[] exceptions) {
+                        return new MethodVisitor(Opcodes.ASM9) {
+                            private final List<AnnotationData> injections = new ArrayList<>();
+
+                            @Override
+                            public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
+                                if (descriptor.equals("Lio/github/freehij/loader/annotation/Inject;")) {
+                                    return new AnnotationVisitor(Opcodes.ASM9) {
+                                        private String method = "<init>";
+                                        private String desc = "()V";
+                                        private At at = At.HEAD;
+
+                                        @Override
+                                        public void visit(String name, Object value) {
+                                            switch (name) {
+                                                case "method": method = (String) value; break;
+                                                case "descriptor": desc = (String) value; break;
+                                                case "at": at = (At) value; break;
+                                            }
+                                        }
+
+                                        @Override
+                                        public void visitEnd() {
+                                            injections.add(new AnnotationData(method, desc, at));
+                                        }
+                                    };
+                                }
+                                return null;
+                            }
+
+                            @Override
+                            public void visitEnd() {
+                                for (AnnotationData data : injections) {
+                                    if (targetClass != null && data.method != null && data.desc != null) {
+                                        points.add(new InjectionPoint(
+                                                targetClass,
+                                                data.method,
+                                                data.desc,
+                                                data.at,
+                                                className,
+                                                name
+                                        ));
+                                    }
+                                }
+                            }
+                        };
+                    }
+
+                    @Override
+                    public void visitEnd() {
+                        if (targetClass != null && !points.isEmpty()) {
+                            injectionPoints.computeIfAbsent(targetClass, k -> new ArrayList<>())
+                                    .addAll(points);
+                        }
+                    }
+                }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+            }
+        } catch (IOException e) {
+            LOGGER.log(System.Logger.Level.ERROR, "Failed to process injection class: " + className, e);
+        }
+    }
+
+    static class AnnotationData {
+        final String method;
+        final String desc;
+        final At at;
+
+        AnnotationData(String method, String desc, At at) {
+            this.method = method;
+            this.desc = desc;
+            this.at = at;
         }
     }
 
