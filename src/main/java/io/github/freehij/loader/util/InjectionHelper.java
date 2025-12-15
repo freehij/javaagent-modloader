@@ -1,19 +1,10 @@
 package io.github.freehij.loader.util;
 
 public class InjectionHelper {
-    private final Object instance;
-    private final Object[] args;
-    private boolean cancelled = false;
-    private Object returnValue = null;
-    public static Reflector minecraft = null;
-
-    static {
-        try {
-            minecraft = getClazz("net/minecraft/client/Minecraft").getField("instance");
-        } catch (ClassNotFoundException e) {
-            System.err.println("Could not find Minecraft class");
-        }
-    }
+    final Object instance;
+    final Object[] args;
+    boolean cancelled = false;
+    Object returnValue = null;
 
     public InjectionHelper(Object instance, Object[] args) {
         this.instance = instance;
@@ -30,6 +21,11 @@ public class InjectionHelper {
     public static Reflector getClazz(String className) throws ClassNotFoundException {
         Class<?> clazz = Class.forName(className.replace("/", "."));
         return new Reflector(clazz, null);
+    }
+
+    //kinda confusing but whatever </3
+    public static Reflector getReflector(String className) throws ClassNotFoundException {
+        return getClazz(className);
     }
 
     public Reflector getReflector() {
@@ -54,5 +50,13 @@ public class InjectionHelper {
 
     public Object getReturnValue() {
         return returnValue;
+    }
+
+    public static Reflector getMinecraft() {
+        try {
+            return getReflector("net/minecraft/client/Minecraft").getField("instance");
+        } catch (ClassNotFoundException e) {
+            throw new RuntimeException("Could not find Minecraft class", e);
+        }
     }
 }

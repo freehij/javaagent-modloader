@@ -4,6 +4,8 @@ import io.github.freehij.loader.annotation.Inject;
 import io.github.freehij.loader.annotation.EditClass;
 import io.github.freehij.loader.constant.At;
 import org.objectweb.asm.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.lang.instrument.ClassFileTransformer;
@@ -21,21 +23,34 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
 public class Loader {
-    private static final System.Logger LOGGER = System.getLogger("loader");
-    private static final Map<String, List<InjectionPoint>> injectionPoints = new HashMap<>();
-    private static final List<ModInfo> mods = new ArrayList<>();
-    private static final List<URL> modUrls = new ArrayList<>();
+    static final String VERSION = "a1.0.0";
+    static final Logger LOGGER = LoggerFactory.getLogger("Loader");
+    static final Map<String, List<InjectionPoint>> injectionPoints = new HashMap<>();
+    static final List<ModInfo> mods = new ArrayList<>();
+    static final List<URL> modUrls = new ArrayList<>();
 
     public static void premain(String args, Instrumentation inst) {
         processInjectionClass("io/github/freehij/injections/KnotClassPathFixer",
                 Thread.currentThread().getContextClassLoader());
+        mods.add(new ModInfo(
+                "loader",
+                "Loader",
+                VERSION,
+                "freehij",
+                "Synthetic loader modid for dependency checking.",
+                new ArrayList<>(),
+                null
+        ));
         loadMods();
-        System.out.println(Arrays.toString(mods.toArray()));
+        LOGGER.info("Found mods:");
+        for (ModInfo mod : mods) {
+            LOGGER.info("   - {}", mod.toString());
+        }
         for (URL url : modUrls) {
             try {
                 inst.appendToSystemClassLoaderSearch(new JarFile(url.getFile()));
             } catch (IOException e) {
-                System.err.println("Failed to add mod JAR to System ClassLoader search path: " + url.toString());
+                System.err.println("Failed to add mod JAR to System ClassLoader search path: " + url);
                 e.printStackTrace();
             }
         }
@@ -43,7 +58,7 @@ public class Loader {
         inst.addTransformer(new MixinTransformer(), true);
     }
 
-    private static void loadMods() {
+    static void loadMods() {
         try {
             Path modsDir = Paths.get("mods");
             if (!Files.exists(modsDir)) {
@@ -64,6 +79,7 @@ public class Loader {
                                 props.getProperty("name"),
                                 props.getProperty("version"),
                                 props.getProperty("creator"),
+                                props.getProperty("description", "No description"),
                                 Arrays.asList(props.getProperty("injections", "").split(",")),
                                 jarPath
                         );
@@ -77,7 +93,7 @@ public class Loader {
         }
     }
 
-    private static void scanInjections() {
+    static void scanInjections() {
         URL[] urls = modUrls.toArray(new URL[0]);
         try (URLClassLoader modLoader = new URLClassLoader(urls, Thread.currentThread().getContextClassLoader())) {
             for (ModInfo mod : mods) {
@@ -91,7 +107,7 @@ public class Loader {
         }
     }
 
-    private static void processInjectionClass(String className, ClassLoader loader) {
+    static void processInjectionClass(String className, ClassLoader loader) {
         try {
             // need to replace class loading with bytecode analysis
             // because of recursive class loading
@@ -130,7 +146,12 @@ public class Loader {
     }
 
     public record ModInfo(String id, String name, String version, String creator,
-                   List<String> injections, Path jarPath) { }
+                   String description, List<String> injections, Path jarPath) {
+        @Override
+        public String toString() {
+            return name + " (" + id + ") " + version + " by " + creator;
+        }
+    }
 
     record InjectionPoint(String targetClass, String methodName, String descriptor, At location, String handlerClass,
                           String handlerMethod) { }
@@ -140,7 +161,7 @@ public class Loader {
         public byte[] transform(ClassLoader l, String className, Class<?> c,
                                 ProtectionDomain d, byte[] buffer) {
             if (!injectionPoints.containsKey(className)) return null;
-            LOGGER.log(System.Logger.Level.DEBUG, className + ", loader: " + l.getName());
+            LOGGER.info("Loading {}, loader: {}", className, l.getName());
             ClassReader cr = new ClassReader(buffer);
             ClassWriter cw = new ClassWriter(cr, ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
             cr.accept(new InjectionClassVisitor(cw, className), 0);
@@ -149,7 +170,7 @@ public class Loader {
     }
 
     static class InjectionClassVisitor extends ClassVisitor {
-        private final String className;
+        final String className;
 
         InjectionClassVisitor(ClassVisitor cv, String className) {
             super(Opcodes.ASM9, cv);
@@ -164,7 +185,7 @@ public class Loader {
             if (points == null) return mv;
             for (InjectionPoint point : points) {
                 if (point.methodName.equals(name) && point.descriptor.equals(desc)) {
-                    LOGGER.log(System.Logger.Level.DEBUG, name + desc);
+                    LOGGER.info("transforming {}", name + desc);
                     mv = new InjectionMethodVisitor(mv, access, desc, point);
                 }
             }
@@ -173,11 +194,11 @@ public class Loader {
     }
 
     static class InjectionMethodVisitor extends MethodVisitor {
-        private final InjectionPoint injection;
-        private final int methodAccess;
-        private final String methodDesc;
-        private boolean hasReturned;
-        private boolean inInjection;
+        final InjectionPoint injection;
+        final int methodAccess;
+        final String methodDesc;
+        boolean hasReturned;
+        boolean inInjection;
 
         InjectionMethodVisitor(MethodVisitor mv, int access, String desc, InjectionPoint injection) {
             super(Opcodes.ASM9, mv);
@@ -220,11 +241,11 @@ public class Loader {
             super.visitMaxs(Math.max(maxStack, 10), Math.max(maxLocals, 101));
         }
 
-        private boolean isReturn(int opcode) {
+        boolean isReturn(int opcode) {
             return (opcode >= Opcodes.IRETURN && opcode <= Opcodes.RETURN);
         }
 
-        private void injectHelper() {
+        void injectHelper() {
             if (inInjection) return;
             inInjection = true;
             generateHelperCall(this, methodAccess, methodDesc, injection);
@@ -285,7 +306,7 @@ public class Loader {
         mv.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
     }
 
-    private static void loadAndBoxArgument(MethodVisitor mv, int index, Type type) {
+    static void loadAndBoxArgument(MethodVisitor mv, int index, Type type) {
         mv.visitVarInsn(type.getOpcode(Opcodes.ILOAD), index);
         switch (type.getSort()) {
             case Type.BOOLEAN: box(mv, "java/lang/Boolean", "(Z)Ljava/lang/Boolean;"); break;
@@ -299,11 +320,11 @@ public class Loader {
         }
     }
 
-    private static void box(MethodVisitor mv, String owner, String descriptor) {
+    static void box(MethodVisitor mv, String owner, String descriptor) {
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, owner, "valueOf", descriptor, false);
     }
 
-    private static void unbox(MethodVisitor mv, Type type) {
+    static void unbox(MethodVisitor mv, Type type) {
         String className = type.getClassName().replace(".", "/");
         String[] method = {"booleanValue", "byteValue", "charValue", "shortValue",
                 "intValue", "floatValue", "longValue", "doubleValue"};

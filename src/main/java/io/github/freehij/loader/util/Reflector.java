@@ -5,8 +5,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class Reflector {
-    private final Class<?> clazz;
-    private final Object object;
+    final Class<?> clazz;
+    final Object object;
 
     public Reflector(Class<?> clazz, Object object) {
         this.clazz = clazz;
@@ -57,25 +57,29 @@ public class Reflector {
         return clazz;
     }
 
+    Field findField(String fieldName) throws NoSuchFieldException {
+        Class<?> current = this.clazz;
+        while (current != null) {
+            try {
+                return current.getDeclaredField(fieldName);
+            } catch (NoSuchFieldException e) {
+                current = current.getSuperclass();
+            }
+        }
+        throw new NoSuchFieldException("Field not found: " + fieldName);
+    }
+
     public Reflector getField(String fieldName) {
         //if this.object is null get a static variable else from an instanced class
         //returns Reflector with field value
         //throws Exception if field is not static and no object instance is presented
         //throws RuntimeException when other errors occur
         try {
-            Field field = this.clazz.getDeclaredField(fieldName);
+            Field field = findField(fieldName);
             field.setAccessible(true);
-
-            Object value;
-            if (this.object == null) {
-                if (!Modifier.isStatic(field.getModifiers())) {
-                    throw new Exception("Not a static field: " + fieldName);
-                }
-                value = field.get(null);
-            } else {
-                value = field.get(this.object);
-            }
-
+            boolean isStatic = Modifier.isStatic(field.getModifiers());
+            if (!isStatic && this.object == null) throw new NotStaticException("Not a static field: " + fieldName);
+            Object value = field.get(isStatic ? null : this.object);
             return new Reflector(field.getType(), value);
         } catch (Exception e) {
             throw new RuntimeException("Failed to get field: " + fieldName, e);
@@ -87,17 +91,11 @@ public class Reflector {
         //throws Exception if field is not static and no object instance is presented
         //throws RuntimeException when other errors occur
         try {
-            Field field = clazz.getDeclaredField(fieldName);
+            Field field = findField(fieldName);
             field.setAccessible(true);
-
-            if (object == null) {
-                if (!Modifier.isStatic(field.getModifiers())) {
-                    throw new Exception("Not a static field: " + fieldName);
-                }
-                field.set(null, value);
-            } else {
-                field.set(object, value);
-            }
+            boolean isStatic = Modifier.isStatic(field.getModifiers());
+            if (!isStatic && this.object == null) throw new NotStaticException("Not a static field: " + fieldName);
+            field.set(isStatic ? null : this.object, value);
         } catch (Exception e) {
             throw new RuntimeException("Failed to set field: " + fieldName, e);
         }
@@ -117,7 +115,6 @@ public class Reflector {
         try {
             Class<?> searchClass = this.clazz;
             Method method = null;
-
             while (searchClass != null && method == null) {
                 try {
                     method = searchClass.getDeclaredMethod(methodName, paramTypes);
@@ -125,18 +122,16 @@ public class Reflector {
                     searchClass = searchClass.getSuperclass();
                 }
             }
-
             if (method == null) {
                 throw new NoSuchMethodException("Method not found: " + methodName);
             }
-
             method.setAccessible(true);
             Object result;
             if (this.object == null) {
                 if (!Modifier.isStatic(method.getModifiers())) {
-                    throw new Exception("Not a static method: " + methodName);
+                    throw new NotStaticException("Not a static method: " + methodName);
                 }
-                result = method.invoke((Object)null, args);
+                result = method.invoke(null, args);
             } else {
                 result = method.invoke(this.object, args);
             }
@@ -224,5 +219,11 @@ public class Reflector {
             }
         }
         return classes.toArray(new Class<?>[0]);
+    }
+
+    public static class NotStaticException extends Exception {
+        public NotStaticException(String string) {
+            super(string);
+        }
     }
 }
