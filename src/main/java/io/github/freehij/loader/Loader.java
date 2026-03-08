@@ -32,20 +32,7 @@ public class Loader {
     public static void premain(String args, Instrumentation inst) {
         processInjectionClass("io/github/freehij/injections/KnotClassPathFixer",
                 Thread.currentThread().getContextClassLoader());
-        mods.add(new ModInfo(
-                "loader",
-                "Loader",
-                VERSION,
-                "freehij",
-                "Synthetic loader modid for dependency checking.",
-                new ArrayList<>(),
-                null
-        ));
-        loadMods();
-        LOGGER.info("Found mods:");
-        for (ModInfo mod : mods) {
-            LOGGER.info("   - {}", mod.toString());
-        }
+        defineMods(true);
         try {
             Class.forName("net.fabricmc.loader.impl.FabricLoaderImpl");
         } catch (ClassNotFoundException ignored) {
@@ -60,6 +47,26 @@ public class Loader {
         }
         scanInjections();
         inst.addTransformer(new MixinTransformer(), true);
+    }
+
+    static void defineMods(boolean log) {
+        mods.add(new ModInfo(
+                "loader",
+                "Loader",
+                VERSION,
+                "freehij",
+                "Synthetic loader modid for dependency checking.",
+                "No license",
+                new ArrayList<>(),
+                null
+        ));
+        loadMods();
+        if (log) {
+            LOGGER.info("Found mods:");
+            for (ModInfo mod : mods) {
+                LOGGER.info("   - {}", mod.toString());
+            }
+        }
     }
 
     static void loadMods() {
@@ -84,6 +91,7 @@ public class Loader {
                                 props.getProperty("version"),
                                 props.getProperty("creator"),
                                 props.getProperty("description", "No description"),
+                                props.getProperty("license", "No license"),
                                 Arrays.asList(props.getProperty("injections", "").split(",")),
                                 jarPath
                         );
@@ -113,11 +121,6 @@ public class Loader {
 
     static void processInjectionClass(String className, ClassLoader loader) {
         try {
-            // need to replace class loading with bytecode analysis
-            // because of recursive class loading
-            // without that there are ain't no REAL fabric support
-            // without direct having direct reference i'm just forced to use reflector (reflector sucks ngl)
-            // :(
             Class<?> clazz = Class.forName(className.replace("/", "."), false, loader);
             EditClass injection = clazz.getAnnotation(EditClass.class);
             if (injection == null) return;
@@ -146,11 +149,13 @@ public class Loader {
     }
 
     public static List<ModInfo> getMods() {
+        // TODO: proper fix for evil knot conflicts
+        if (mods.isEmpty()) defineMods(false);
         return Collections.unmodifiableList(mods);
     }
 
     public record ModInfo(String id, String name, String version, String creator,
-                   String description, List<String> injections, Path jarPath) {
+                   String description, String license, List<String> injections, Path jarPath) {
         @Override
         public String toString() {
             return name + " (" + id + ") " + version + " by " + creator;
