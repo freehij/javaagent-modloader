@@ -46,12 +46,16 @@ public class Loader {
         for (ModInfo mod : mods) {
             LOGGER.info("   - {}", mod.toString());
         }
-        for (URL url : modUrls) {
-            try {
-                inst.appendToSystemClassLoaderSearch(new JarFile(url.getFile()));
-            } catch (IOException e) {
-                System.err.println("Failed to add mod JAR to System ClassLoader search path: " + url);
-                e.printStackTrace();
+        try {
+            Class.forName("net.fabricmc.loader.impl.FabricLoaderImpl");
+        } catch (ClassNotFoundException ignored) {
+            for (URL url : modUrls) {
+                try {
+                    inst.appendToSystemClassLoaderSearch(new JarFile(url.getFile()));
+                } catch (IOException e) {
+                    System.err.println("Failed to add mod JAR to System ClassLoader search path: " + url);
+                    e.printStackTrace();
+                }
             }
         }
         scanInjections();

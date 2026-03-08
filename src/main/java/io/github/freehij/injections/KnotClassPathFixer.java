@@ -11,13 +11,13 @@ import java.util.Collection;
 
 @EditClass("net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider")
 public class KnotClassPathFixer {
-    @Inject(method = "initialize", descriptor = "(Lnet/fabricmc/loader/impl/launch/FabricLauncher;)V")
-    public static void initialize(InjectionHelper helper) throws Exception {
-        Collection<Path> validParentClassPath =
-                (Collection<Path>) helper.getReflector().getField("validParentClassPath").get();
-        validParentClassPath.add(Path.of(Loader.class.getProtectionDomain().getCodeSource().getLocation().toURI()));
+    @Inject(method = "locateGame", descriptor = "(Lnet/fabricmc/loader/impl/launch/FabricLauncher;[Ljava/lang/String;)Z")
+    public static void locateGame(InjectionHelper helper) throws Exception {
+        Collection<Path> miscGameLibraries =
+                (Collection<Path>) helper.getReflector().getField("miscGameLibraries").get();
+        miscGameLibraries.add(Path.of(Loader.class.getProtectionDomain().getCodeSource().getLocation().toURI()));
         for (URL url : Loader.getModUrls()) {
-            validParentClassPath.add(Path.of(url.toURI()));
+            miscGameLibraries.add(Path.of(url.toURI()));
         }
     }
 }
