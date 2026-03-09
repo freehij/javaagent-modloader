@@ -1,5 +1,5 @@
 # Java agent mod loader
-![https://github.com/freehij/javaagent-modloader/releases/latest](https://img.shields.io/badge/Download-latest-green) ![https://github.com/freehij/javaagent-modloader/issues](https://img.shields.io/badge/github-issues-orange?logo=github)  
+[![latest](https://img.shields.io/badge/Download-latest-green)](https://github.com/freehij/javaagent-modloader/releases/latest) [![issues](https://img.shields.io/badge/github-issues-orange?logo=github)](https://github.com/freehij/javaagent-modloader/issues)  
 A simple minimal dependency java-agent based mod loader for java programs (mainly for minecraft).
 # How to use
 Download the loader and add this to your java arguments for the game instance you want to use the loader with:  
