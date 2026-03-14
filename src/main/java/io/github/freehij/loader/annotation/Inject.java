@@ -11,6 +11,6 @@ import java.lang.annotation.Target;
 @Target(ElementType.METHOD)
 public @interface Inject {
     String method() default "<init>";
-    String descriptor() default "()V";
+    String descriptor() default "";
     At at() default At.HEAD;
 }

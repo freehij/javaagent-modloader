@@ -193,7 +193,8 @@ public class Loader {
             List<InjectionPoint> points = injectionPoints.get(className);
             if (points == null) return mv;
             for (InjectionPoint point : points) {
-                if (point.methodName.equals(name) && point.descriptor.equals(desc)) {
+                if (point.methodName.equals(name) &&
+                        (point.descriptor.isEmpty() || point.descriptor.equals(desc))) {
                     LOGGER.info("transforming {}", name + desc);
                     mv = new InjectionMethodVisitor(mv, access, desc, point);
                 }
