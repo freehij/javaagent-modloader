@@ -3,15 +3,15 @@ package io.github.freehij.loader.util;
 public class InjectionHelper {
     final Object instance;
     final Class<?> type;
-    final Object[] args;
+    final Object[] args, locals;
     boolean cancelled = false;
-    Object returnValue, optional;
+    Object returnValue;
 
-    public InjectionHelper(Object instance, Class<?> type, Object[] args, Object optional) {
+    public InjectionHelper(Object instance, Class<?> type, Object[] args, Object[] locals) {
         this.instance = instance;
         this.type = type;
         this.args = args;
-        this.optional = optional;
+        this.locals = locals;
     }
 
     public Object getArg(int index) {
@@ -50,12 +50,8 @@ public class InjectionHelper {
         return returnValue;
     }
 
-    public void setOptional(Object value) {
-        this.optional = value;
-    }
-
-    public Object getOptional() {
-        return optional;
+    public Object[] getLocals() {
+        return this.locals;
     }
 
     public static Reflector getMinecraft() {

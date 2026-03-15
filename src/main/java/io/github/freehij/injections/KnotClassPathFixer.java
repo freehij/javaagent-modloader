@@ -9,6 +9,7 @@ import java.net.URL;
 import java.nio.file.Path;
 import java.util.Collection;
 
+@SuppressWarnings("unchecked")
 @EditClass("net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider")
 public class KnotClassPathFixer {
     @Inject(method = "locateGame", descriptor = "(Lnet/fabricmc/loader/impl/launch/FabricLauncher;[Ljava/lang/String;)Z")
