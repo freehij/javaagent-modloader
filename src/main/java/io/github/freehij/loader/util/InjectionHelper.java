@@ -2,13 +2,16 @@ package io.github.freehij.loader.util;
 
 public class InjectionHelper {
     final Object instance;
+    final Class<?> type;
     final Object[] args;
     boolean cancelled = false;
-    Object returnValue = null;
+    Object returnValue, optional;
 
-    public InjectionHelper(Object instance, Object[] args) {
+    public InjectionHelper(Object instance, Class<?> type, Object[] args, Object optional) {
         this.instance = instance;
+        this.type = type;
         this.args = args;
+        this.optional = optional;
     }
 
     public Object getArg(int index) {
@@ -18,18 +21,13 @@ public class InjectionHelper {
         return args[index - 1];
     }
 
-    public static Reflector getClazz(String className) throws ClassNotFoundException {
+    public static Reflector getReflector(String className) throws ClassNotFoundException {
         Class<?> clazz = Class.forName(className.replace("/", "."));
         return new Reflector(clazz, null);
     }
 
-    //kinda confusing but whatever </3
-    public static Reflector getReflector(String className) throws ClassNotFoundException {
-        return getClazz(className);
-    }
-
     public Reflector getReflector() {
-        return new Reflector(instance.getClass(), instance);
+        return new Reflector(type, instance);
     }
 
     public Object getSelf() {
@@ -50,6 +48,14 @@ public class InjectionHelper {
 
     public Object getReturnValue() {
         return returnValue;
+    }
+
+    public void setOptional(Object value) {
+        this.optional = value;
+    }
+
+    public Object getOptional() {
+        return optional;
     }
 
     public static Reflector getMinecraft() {

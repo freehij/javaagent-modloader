@@ -221,6 +221,10 @@ public class Reflector {
         return classes.toArray(new Class<?>[0]);
     }
 
+    public boolean isStatic() {
+        return this.object == null;
+    }
+
     public static class NotStaticException extends Exception {
         public NotStaticException(String string) {
             super(string);

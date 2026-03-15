@@ -196,7 +196,7 @@ public class Loader {
                 if (point.methodName.equals(name) &&
                         (point.descriptor.isEmpty() || point.descriptor.equals(desc))) {
                     LOGGER.info("transforming {}", name + desc);
-                    mv = new InjectionMethodVisitor(mv, access, desc, point);
+                    mv = new InjectionMethodVisitor(mv, access, desc, point, this.className);
                 }
             }
             return mv;
@@ -207,14 +207,16 @@ public class Loader {
         final InjectionPoint injection;
         final int methodAccess;
         final String methodDesc;
+        final String className;
         boolean hasReturned;
         boolean inInjection;
 
-        InjectionMethodVisitor(MethodVisitor mv, int access, String desc, InjectionPoint injection) {
+        InjectionMethodVisitor(MethodVisitor mv, int access, String desc, InjectionPoint injection, String className) {
             super(Opcodes.ASM9, mv);
             this.injection = injection;
             this.methodAccess = access;
             this.methodDesc = desc;
+            this.className = className;
         }
 
         @Override
@@ -258,12 +260,12 @@ public class Loader {
         void injectHelper() {
             if (inInjection) return;
             inInjection = true;
-            generateHelperCall(this, methodAccess, methodDesc, injection);
+            generateHelperCall(this, methodAccess, methodDesc, injection, className);
             inInjection = false;
         }
     }
 
-    static void generateHelperCall(MethodVisitor mv, int access, String desc, InjectionPoint injection) {
+    static void generateHelperCall(MethodVisitor mv, int access, String desc, InjectionPoint injection, String className) {
         boolean isStatic = (access & Opcodes.ACC_STATIC) != 0;
 
         mv.visitTypeInsn(Opcodes.NEW, "io/github/freehij/loader/util/InjectionHelper");
@@ -273,6 +275,7 @@ public class Loader {
         } else {
             mv.visitVarInsn(Opcodes.ALOAD, 0);
         }
+        mv.visitLdcInsn(Type.getObjectType(className));
         Type[] args = Type.getArgumentTypes(desc);
         mv.visitIntInsn(Opcodes.BIPUSH, args.length);
         mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
@@ -284,10 +287,11 @@ public class Loader {
             mv.visitInsn(Opcodes.AASTORE);
             localIndex += args[i].getSize();
         }
+        mv.visitInsn(Opcodes.ACONST_NULL);
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL,
                 "io/github/freehij/loader/util/InjectionHelper",
                 "<init>",
-                "(Ljava/lang/Object;[Ljava/lang/Object;)V",
+                "(Ljava/lang/Object;Ljava/lang/Class;[Ljava/lang/Object;Ljava/lang/Object;)V",
                 false);
 
         mv.visitVarInsn(Opcodes.ASTORE, 100);
