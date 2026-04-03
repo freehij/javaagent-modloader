@@ -13,4 +13,6 @@ public @interface Inject {
     String method() default "<init>";
     String descriptor() default "";
     At at() default At.HEAD;
+    Local[] locals() default {};
+    boolean modifyLocals() default false;
 }

@@ -2,10 +2,10 @@ package io.github.freehij.loader;
 
 import io.github.freehij.loader.annotation.Inject;
 import io.github.freehij.loader.annotation.EditClass;
+import io.github.freehij.loader.annotation.Local;
 import io.github.freehij.loader.constant.At;
+import io.github.freehij.loader.util.Logger;
 import org.objectweb.asm.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.lang.instrument.ClassFileTransformer;
@@ -24,7 +24,6 @@ import java.util.jar.JarFile;
 
 public class Loader {
     static final String VERSION = "a1.0.0";
-    static final Logger LOGGER = LoggerFactory.getLogger("Loader");
     static final Map<String, List<InjectionPoint>> injectionPoints = new HashMap<>();
     static final List<ModInfo> mods = new ArrayList<>();
     static final List<URL> modUrls = new ArrayList<>();
@@ -62,9 +61,9 @@ public class Loader {
         ));
         loadMods();
         if (log) {
-            LOGGER.info("Found mods:");
+            Logger.info("Found mods:", "Loader");
             for (ModInfo mod : mods) {
-                LOGGER.info("   - {}", mod.toString());
+                Logger.info("	- " + mod.toString(), "Loader");
             }
         }
     }
@@ -122,19 +121,17 @@ public class Loader {
     static void processInjectionClass(String className, ClassLoader loader) {
         try {
             Class<?> clazz = Class.forName(className.replace("/", "."), false, loader);
-            EditClass injection = clazz.getAnnotation(EditClass.class);
-            if (injection == null) return;
+            EditClass target = clazz.getAnnotation(EditClass.class);
+            if (target == null) return;
 
             for (Method method : clazz.getDeclaredMethods()) {
                 Inject inject = method.getAnnotation(Inject.class);
                 if (inject == null) continue;
 
-                injectionPoints.computeIfAbsent(injection.value(), k -> new ArrayList<>())
+                injectionPoints.computeIfAbsent(target.value(), k -> new ArrayList<>())
                         .add(new InjectionPoint(
-                                injection.value(),
-                                inject.method(),
-                                inject.descriptor(),
-                                inject.at(),
+                                inject,
+                                target.value(),
                                 clazz.getName().replace('.', '/'),
                                 method.getName()
                         ));
@@ -162,15 +159,14 @@ public class Loader {
         }
     }
 
-    record InjectionPoint(String targetClass, String methodName, String descriptor, At location, String handlerClass,
-                          String handlerMethod) { }
+    record InjectionPoint(Inject inject, String targetClass, String handlerClass, String handlerMethod) { }
 
     static class MixinTransformer implements ClassFileTransformer {
         @Override
         public byte[] transform(ClassLoader l, String className, Class<?> c,
                                 ProtectionDomain d, byte[] buffer) {
             if (!injectionPoints.containsKey(className)) return null;
-            LOGGER.info("Loading {}, loader: {}", className, l.getName());
+            Logger.debug("Loading " + className + ", loader: " + l.getName(), this);
             ClassReader cr = new ClassReader(buffer);
             ClassWriter cw = new ClassWriter(cr, ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
             cr.accept(new InjectionClassVisitor(cw, className), 0);
@@ -193,9 +189,10 @@ public class Loader {
             List<InjectionPoint> points = injectionPoints.get(className);
             if (points == null) return mv;
             for (InjectionPoint point : points) {
-                if (point.methodName.equals(name) &&
-                        (point.descriptor.isEmpty() || point.descriptor.equals(desc))) {
-                    LOGGER.info("transforming {}", name + desc);
+                if (point.inject.method().equals(name) &&
+                        (point.inject.descriptor().isEmpty() || point.inject.descriptor().equals(desc))) {
+                    Logger.debug("Transforming " + name + desc +
+                            ", handler: " + point.handlerClass + "." + point.handlerMethod, this);
                     mv = new InjectionMethodVisitor(mv, access, desc, point, this.className);
                 }
             }
@@ -222,7 +219,7 @@ public class Loader {
         @Override
         public void visitCode() {
             super.visitCode();
-            if (injection.location == At.HEAD) injectHelper();
+            if (injection.inject.at() == At.HEAD) injectHelper();
         }
 
         @Override
@@ -232,7 +229,7 @@ public class Loader {
                 return;
             }
 
-            if (injection.location == At.RETURN && isReturn(opcode)) {
+            if (injection.inject.at() == At.RETURN && isReturn(opcode)) {
                 injectHelper();
                 super.visitInsn(opcode);
                 hasReturned = true;
@@ -244,7 +241,7 @@ public class Loader {
 
         @Override
         public void visitEnd() {
-            if (injection.location == At.TAIL && !hasReturned) injectHelper();
+            if (injection.inject.at() == At.TAIL && !hasReturned) injectHelper();
             super.visitEnd();
         }
 
@@ -265,7 +262,8 @@ public class Loader {
         }
     }
 
-    static void generateHelperCall(MethodVisitor mv, int access, String desc, InjectionPoint injection, String className) {
+    static void generateHelperCall(MethodVisitor mv, int access, String desc, InjectionPoint injection,
+                                   String className) {
         boolean isStatic = (access & Opcodes.ACC_STATIC) != 0;
 
         mv.visitTypeInsn(Opcodes.NEW, "io/github/freehij/loader/util/InjectionHelper");
@@ -276,36 +274,74 @@ public class Loader {
             mv.visitVarInsn(Opcodes.ALOAD, 0);
         }
         mv.visitLdcInsn(Type.getObjectType(className));
-        Type[] args = Type.getArgumentTypes(desc);
-        mv.visitIntInsn(Opcodes.BIPUSH, args.length);
+        Type[] argTypes = Type.getArgumentTypes(desc);
+        mv.visitIntInsn(Opcodes.BIPUSH, argTypes.length);
         mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
         int localIndex = isStatic ? 0 : 1;
-        for (int i = 0; i < args.length; i++) {
+        for (int i = 0; i < argTypes.length; i++) {
             mv.visitInsn(Opcodes.DUP);
             mv.visitIntInsn(Opcodes.BIPUSH, i);
-            loadAndBoxArgument(mv, localIndex, args[i]);
+            mv.visitVarInsn(argTypes[i].getOpcode(Opcodes.ILOAD), localIndex);
+            boxElement(mv, argTypes[i]);
             mv.visitInsn(Opcodes.AASTORE);
-            localIndex += args[i].getSize();
+            localIndex += argTypes[i].getSize();
         }
-        mv.visitInsn(Opcodes.ACONST_NULL);
+
+        Local[] locals = injection.inject.locals();
+        mv.visitIntInsn(Opcodes.BIPUSH, locals.length);
+        mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
+        for (int i = 0; i < locals.length; i++) {
+            Local local = locals[i];
+            mv.visitInsn(Opcodes.DUP);
+            mv.visitIntInsn(Opcodes.BIPUSH, i);
+            Type localType = Type.getType(local.type());
+            mv.visitVarInsn(localType.getOpcode(Opcodes.ILOAD), local.index());
+            boxElement(mv, localType);
+            mv.visitInsn(Opcodes.AASTORE);
+        }
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL,
                 "io/github/freehij/loader/util/InjectionHelper",
                 "<init>",
-                "(Ljava/lang/Object;Ljava/lang/Class;[Ljava/lang/Object;Ljava/lang/Object;)V",
+                "(Ljava/lang/Object;Ljava/lang/Class;[Ljava/lang/Object;[Ljava/lang/Object;)V",
                 false);
 
         mv.visitVarInsn(Opcodes.ASTORE, 100);
         mv.visitVarInsn(Opcodes.ALOAD, 100);
         mv.visitMethodInsn(Opcodes.INVOKESTATIC,
-                injection.handlerClass,
-                injection.handlerMethod,
+                injection.handlerClass(),
+                injection.handlerMethod(),
                 "(Lio/github/freehij/loader/util/InjectionHelper;)V",
                 false);
+
+        if (injection.inject.modifyLocals() && locals.length > 0) {
+            mv.visitVarInsn(Opcodes.ALOAD, 100);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                    "io/github/freehij/loader/util/InjectionHelper",
+                    "getLocals",
+                    "()[Ljava/lang/Object;",
+                    false);
+            for (int i = 0; i < locals.length; i++) {
+                Local local = locals[i];
+                Type localType = Type.getType(local.type());
+                mv.visitInsn(Opcodes.DUP);
+                mv.visitIntInsn(Opcodes.BIPUSH, i);
+                mv.visitInsn(Opcodes.AALOAD);
+                if (localType.getSort() <= Type.DOUBLE) {
+                    unbox(mv, localType);
+                } else {
+                    mv.visitTypeInsn(Opcodes.CHECKCAST, localType.getInternalName());
+                }
+                mv.visitVarInsn(localType.getOpcode(Opcodes.ISTORE), local.index());
+            }
+            mv.visitInsn(Opcodes.POP);
+        }
+
         Label continueLabel = new Label();
         mv.visitVarInsn(Opcodes.ALOAD, 100);
         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
                 "io/github/freehij/loader/util/InjectionHelper", "isCancelled", "()Z", false);
         mv.visitJumpInsn(Opcodes.IFEQ, continueLabel);
+
         Type returnType = Type.getReturnType(desc);
         if (returnType == Type.VOID_TYPE) {
             mv.visitInsn(Opcodes.RETURN);
@@ -316,12 +352,12 @@ public class Loader {
             unbox(mv, returnType);
             mv.visitInsn(returnType.getOpcode(Opcodes.IRETURN));
         }
+
         mv.visitLabel(continueLabel);
         mv.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
     }
 
-    static void loadAndBoxArgument(MethodVisitor mv, int index, Type type) {
-        mv.visitVarInsn(type.getOpcode(Opcodes.ILOAD), index);
+    static void boxElement(MethodVisitor mv, Type type) {
         switch (type.getSort()) {
             case Type.BOOLEAN: box(mv, "java/lang/Boolean", "(Z)Ljava/lang/Boolean;"); break;
             case Type.BYTE: box(mv, "java/lang/Byte", "(B)Ljava/lang/Byte;"); break;
@@ -339,16 +375,19 @@ public class Loader {
     }
 
     static void unbox(MethodVisitor mv, Type type) {
-        String className = type.getClassName().replace(".", "/");
-        String[] method = {"booleanValue", "byteValue", "charValue", "shortValue",
-                "intValue", "floatValue", "longValue", "doubleValue"};
-        String[] desc = {"()Z", "()B", "()C", "()S", "()I", "()F", "()J", "()D"};
-
         int sort = type.getSort();
         if (sort >= Type.BOOLEAN && sort <= Type.DOUBLE) {
-            mv.visitTypeInsn(Opcodes.CHECKCAST, className);
-            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, className,
-                    method[sort - Type.BOOLEAN], desc[sort - Type.BOOLEAN], false);
+            String[] wrappers = {
+                    "java/lang/Boolean", "java/lang/Byte", "java/lang/Character",
+                    "java/lang/Short", "java/lang/Integer", "java/lang/Float",
+                    "java/lang/Long", "java/lang/Double"
+            };
+            String[] methods = {"booleanValue", "byteValue", "charValue", "shortValue",
+                    "intValue", "floatValue", "longValue", "doubleValue"};
+            String[] descs = {"()Z", "()B", "()C", "()S", "()I", "()F", "()J", "()D"};
+            String wrapper = wrappers[sort - 1];
+            mv.visitTypeInsn(Opcodes.CHECKCAST, wrapper);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, wrapper, methods[sort - 1], descs[sort - 1], false);
         } else if (sort == Type.ARRAY || sort == Type.OBJECT) {
             mv.visitTypeInsn(Opcodes.CHECKCAST, type.getInternalName());
         }

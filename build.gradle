@@ -13,7 +13,6 @@ repositories {
 dependencies {
     implementation 'org.ow2.asm:asm:9.8'
     implementation 'org.ow2.asm:asm-commons:9.8'
-    compileOnly 'org.slf4j:slf4j-api:2.0.17'
 }
 
 jar {
@@ -24,6 +23,11 @@ jar {
                 'Can-Retransform-Classes': true
         )
     }
+}
+
+shadowJar {
+    relocate 'org.objectweb.asm', 'loader.org.objectweb.asm'
+    relocate 'org.objectweb.asm.commons', 'loader.org.objectweb.asm.commons'
 }
 
 tasks.build.dependsOn tasks.shadowJar
