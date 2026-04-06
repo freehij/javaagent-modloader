@@ -1,5 +1,6 @@
 package io.github.freehij.loader;
 
+import io.github.freehij.loader.annotation.AdvancedAt;
 import io.github.freehij.loader.annotation.Inject;
 import io.github.freehij.loader.annotation.EditClass;
 import io.github.freehij.loader.annotation.Local;
@@ -22,6 +23,7 @@ import java.util.*;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
+@SuppressWarnings("deprecation")
 public class Loader {
     static final String VERSION = "a1.0.0";
     static final Map<String, List<InjectionPoint>> injectionPoints = new HashMap<>();
@@ -29,12 +31,13 @@ public class Loader {
     static final List<URL> modUrls = new ArrayList<>();
 
     public static void premain(String args, Instrumentation inst) {
-        processInjectionClass("io/github/freehij/injections/KnotClassPathFixer",
-                Thread.currentThread().getContextClassLoader());
         defineMods(true);
-        try {
-            Class.forName("net.fabricmc.loader.impl.FabricLoaderImpl");
-        } catch (ClassNotFoundException ignored) {
+        processInjectionClass("io/github/freehij/injections/VanillaServerPathFixer",
+                Thread.currentThread().getContextClassLoader());
+        if (hasFabric()) {
+            processInjectionClass("io/github/freehij/injections/KnotClassPathFixer",
+                    Thread.currentThread().getContextClassLoader());
+        } else {
             for (URL url : modUrls) {
                 try {
                     inst.appendToSystemClassLoaderSearch(new JarFile(url.getFile()));
@@ -46,6 +49,18 @@ public class Loader {
         }
         scanInjections();
         inst.addTransformer(new MixinTransformer(), true);
+    }
+
+    static boolean hasFabric() {
+        try {
+            Class.forName("net.fabricmc.loader.impl.FabricLoaderImpl");
+            return true;
+        } catch(ClassNotFoundException ignored) {}
+        try {
+            Class.forName("net.fabricmc.installer.Main");
+            return true;
+        } catch(ClassNotFoundException ignored) {}
+        return false;
     }
 
     static void defineMods(boolean log) {
@@ -152,7 +167,7 @@ public class Loader {
     }
 
     public record ModInfo(String id, String name, String version, String creator,
-                   String description, String license, List<String> injections, Path jarPath) {
+                          String description, String license, List<String> injections, Path jarPath) {
         @Override
         public String toString() {
             return name + " (" + id + ") " + version + " by " + creator;
@@ -207,6 +222,7 @@ public class Loader {
         final String className;
         boolean hasReturned;
         boolean inInjection;
+        int storeCount;
 
         InjectionMethodVisitor(MethodVisitor mv, int access, String desc, InjectionPoint injection, String className) {
             super(Opcodes.ASM9, mv);
@@ -237,6 +253,25 @@ public class Loader {
                 super.visitInsn(opcode);
                 if (isReturn(opcode)) hasReturned = true;
             }
+        }
+
+        @Override
+        public void visitVarInsn(int opcode, int var) {
+            if (inInjection) {
+                super.visitVarInsn(opcode, var);
+                return;
+            }
+            if (opcode >= Opcodes.ISTORE && opcode <= Opcodes.ASTORE) {
+                for (AdvancedAt adv : injection.inject.advancedAt()) {
+                    if (adv.at() == AdvancedAt.At.ASSIGN_LOCAL) {
+                        if (adv.ordinal() == -1 || adv.ordinal() == storeCount) {
+                            injectHelper();
+                        }
+                    }
+                }
+                storeCount++;
+            }
+            super.visitVarInsn(opcode, var);
         }
 
         @Override

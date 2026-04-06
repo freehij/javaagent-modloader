@@ -12,7 +12,11 @@ import java.lang.annotation.Target;
 public @interface Inject {
     String method() default "<init>";
     String descriptor() default "";
+    @Deprecated
     At at() default At.HEAD;
     Local[] locals() default {};
     boolean modifyLocals() default false;
+    AdvancedAt[] advancedAt() default {};
+    // TODO
+    // int priority() default 0;
 }
