@@ -29,24 +29,14 @@ public class Loader {
     static final List<URL> modUrls = new ArrayList<>();
 
     public static void premain(String args, Instrumentation inst) {
-        processInjectionClass("io/github/freehij/injections/KnotClassPathFixer",
-                Thread.currentThread().getContextClassLoader());
         defineMods(true);
-        try {
-            Class.forName("net.fabricmc.loader.impl.FabricLoaderImpl");
-        } catch (ClassNotFoundException ignored) {
-            boolean isServer = true;
-            try {
-                Class.forName("net.minecraft.client.Minecraft");
-                isServer = false;
-            } catch (ClassNotFoundException ignored1) { }
+        if (hasFabric()) {
+            processInjectionClass("io/github/freehij/injections/KnotClassPathFixer",
+                            Thread.currentThread().getContextClassLoader());
+        } else {
             for (URL url : modUrls) {
                 try {
-                    if (isServer) {
-                        inst.appendToBootstrapClassLoaderSearch(new JarFile(url.getFile()));
-                    } else {
-                        inst.appendToSystemClassLoaderSearch(new JarFile(url.getFile()));
-                    }
+                    inst.appendToSystemClassLoaderSearch(new JarFile(url.getFile()));
                 } catch (IOException e) {
                     System.err.println("Failed to add mod JAR to System ClassLoader search path: " + url);
                     e.printStackTrace();
@@ -55,6 +45,18 @@ public class Loader {
         }
         scanInjections();
         inst.addTransformer(new MixinTransformer(), true);
+    }
+
+    static boolean hasFabric() {
+        try {
+            Class.forName("net.fabricmc.loader.impl.FabricLoaderImpl");
+            return true;
+        } catch(ClassNotFoundException ignored) {}
+        try {
+            Class.forName("net.fabricmc.installer.Main");
+            return true;
+        } catch(ClassNotFoundException ignored) {}
+        return false;
     }
 
     static void defineMods(boolean log) {
