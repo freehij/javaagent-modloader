@@ -18,10 +18,11 @@ public class KnotClassPathFixer {
     public static void locateGame(InjectionHelper helper) throws Exception {
         Collection<Path> miscGameLibraries =
                 (Collection<Path>) helper.getReflector().getField("miscGameLibraries").get();
-        miscGameLibraries.add(Path.of(Loader.class.getProtectionDomain().getCodeSource().getLocation().toURI()));
-        for (URL url : Loader.getModUrls()) {
-            miscGameLibraries.add(Path.of(url.toURI()));
-        }
+        try {
+            java.security.CodeSource cs = Loader.class.getProtectionDomain().getCodeSource();
+            if (cs != null) miscGameLibraries.add(Path.of(cs.getLocation().toURI()));
+        } catch (Exception ignored) {}
+        for (URL url : Loader.getModUrls()) miscGameLibraries.add(Path.of(url.toURI()));
         Logger.debug("Applied knot class path fix", KnotClassPathFixer.class);
     }
 }

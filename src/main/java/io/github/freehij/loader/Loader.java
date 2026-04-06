@@ -35,9 +35,18 @@ public class Loader {
         try {
             Class.forName("net.fabricmc.loader.impl.FabricLoaderImpl");
         } catch (ClassNotFoundException ignored) {
+            boolean isServer = true;
+            try {
+                Class.forName("net.minecraft.client.Minecraft");
+                isServer = false;
+            } catch (ClassNotFoundException ignored1) { }
             for (URL url : modUrls) {
                 try {
-                    inst.appendToSystemClassLoaderSearch(new JarFile(url.getFile()));
+                    if (isServer) {
+                        inst.appendToBootstrapClassLoaderSearch(new JarFile(url.getFile()));
+                    } else {
+                        inst.appendToSystemClassLoaderSearch(new JarFile(url.getFile()));
+                    }
                 } catch (IOException e) {
                     System.err.println("Failed to add mod JAR to System ClassLoader search path: " + url);
                     e.printStackTrace();
