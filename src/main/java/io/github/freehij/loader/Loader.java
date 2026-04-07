@@ -1,17 +1,20 @@
 package io.github.freehij.loader;
 
 import io.github.freehij.loader.annotation.AdvancedAt;
-import io.github.freehij.loader.annotation.Inject;
 import io.github.freehij.loader.annotation.EditClass;
+import io.github.freehij.loader.annotation.Inject;
 import io.github.freehij.loader.annotation.Local;
 import io.github.freehij.loader.constant.At;
 import io.github.freehij.loader.util.Logger;
+import net.bytebuddy.description.annotation.AnnotationDescription;
+import net.bytebuddy.description.method.MethodDescription;
+import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.pool.TypePool;
 import org.objectweb.asm.*;
 
 import java.io.*;
 import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.Instrumentation;
-import java.lang.reflect.Method;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.DirectoryStream;
@@ -134,25 +137,24 @@ public class Loader {
     }
 
     static void processInjectionClass(String className, ClassLoader loader) {
-        try {
-            Class<?> clazz = Class.forName(className.replace("/", "."), false, loader);
-            EditClass target = clazz.getAnnotation(EditClass.class);
-            if (target == null) return;
-
-            for (Method method : clazz.getDeclaredMethods()) {
-                Inject inject = method.getAnnotation(Inject.class);
-                if (inject == null) continue;
-
-                injectionPoints.computeIfAbsent(target.value(), k -> new ArrayList<>())
-                        .add(new InjectionPoint(
-                                inject,
-                                target.value(),
-                                clazz.getName().replace('.', '/'),
-                                method.getName()
-                        ));
-            }
-        } catch (ClassNotFoundException e) {
-            e.printStackTrace();
+        TypePool typePool = TypePool.Default.of(loader);
+        TypeDescription typeDesc = typePool.describe(className.replace("/", ".")).resolve();
+        AnnotationDescription editClassAnn = typeDesc.getDeclaredAnnotations()
+                .ofType(EditClass.class);
+        if (editClassAnn == null) return;
+        String targetClassName = editClassAnn.getValue("value").resolve(String.class);
+        for (MethodDescription.InDefinedShape method : typeDesc.getDeclaredMethods()) {
+            AnnotationDescription injectAnn = method.getDeclaredAnnotations()
+                    .ofType(Inject.class);
+            if (injectAnn == null) continue;
+            Inject inject = injectAnn.prepare(Inject.class).load();
+            injectionPoints.computeIfAbsent(targetClassName, k -> new ArrayList<>())
+                    .add(new InjectionPoint(
+                            inject,
+                            targetClassName,
+                            className,
+                            method.getName()
+                    ));
         }
     }
 

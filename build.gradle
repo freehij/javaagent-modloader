@@ -13,6 +13,7 @@ repositories {
 dependencies {
     implementation 'org.ow2.asm:asm:9.8'
     implementation 'org.ow2.asm:asm-commons:9.8'
+    implementation 'net.bytebuddy:byte-buddy-gradle-plugin:1.18.8'
 }
 
 jar {
@@ -26,8 +27,9 @@ jar {
 }
 
 shadowJar {
-    relocate 'org.objectweb.asm', 'loader.org.objectweb.asm'
-    relocate 'org.objectweb.asm.commons', 'loader.org.objectweb.asm.commons'
+    relocate 'org.objectweb.asm', 'relocated.org.objectweb.asm'
+    relocate 'org.objectweb.asm.commons', 'relocated.org.objectweb.asm.commons'
+    relocate 'net.bytebuddy', 'relocated.net.bytebuddy'
 }
 
 tasks.build.dependsOn tasks.shadowJar
