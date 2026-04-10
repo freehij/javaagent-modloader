@@ -1,16 +1,11 @@
 package io.github.freehij.loader;
 
 import io.github.freehij.loader.annotation.AdvancedAt;
-import io.github.freehij.loader.annotation.EditClass;
 import io.github.freehij.loader.annotation.Inject;
 import io.github.freehij.loader.annotation.Local;
 import io.github.freehij.loader.constant.At;
 import io.github.freehij.loader.util.AnnotationParser;
 import io.github.freehij.loader.util.Logger;
-import net.bytebuddy.description.annotation.AnnotationDescription;
-import net.bytebuddy.description.method.MethodDescription;
-import net.bytebuddy.description.type.TypeDescription;
-import net.bytebuddy.pool.TypePool;
 import org.objectweb.asm.*;
 
 import java.io.*;
