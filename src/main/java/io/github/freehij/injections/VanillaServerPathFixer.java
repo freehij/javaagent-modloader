@@ -13,7 +13,7 @@ import java.net.URL;
 import java.security.CodeSource;
 import java.util.List;
 
-@SuppressWarnings("unchecked")
+@SuppressWarnings({"unchecked", "deprecation"})
 @EditClass("net/minecraft/bundler/Main")
 public class VanillaServerPathFixer {
     @Inject(method = "run", descriptor = "([Ljava/lang/String;)V", at = At.NONE,
