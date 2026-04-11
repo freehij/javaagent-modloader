@@ -36,6 +36,10 @@ public class Loader {
         if (hasFabric()) {
             processInjectionClass("io/github/freehij/injections/KnotClassPathFixer",
                     Thread.currentThread().getContextClassLoader());
+        } else if (hasNeoForge()) {
+            Logger.debug("has neoforge");
+            processInjectionClass("io/github/freehij/injections/FancyMLPathFixer",
+                    Thread.currentThread().getContextClassLoader());
         } else {
             for (URL url : modUrls) {
                 try {
@@ -59,6 +63,14 @@ public class Loader {
             Class.forName("net.fabricmc.installer.Main");
             return true;
         } catch(ClassNotFoundException ignored) {}
+        return false;
+    }
+
+    static boolean hasNeoForge() {
+        try {
+            Class.forName("net.neoforged.fml.loading.FMLLoader");
+            return true;
+        } catch(ClassNotFoundException ignored) { }
         return false;
     }
 

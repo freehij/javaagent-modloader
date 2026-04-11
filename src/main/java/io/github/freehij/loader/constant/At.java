@@ -5,6 +5,5 @@ public enum At {
     NONE,
     HEAD,
     TAIL,
-    RETURN,
-    ASSIGN
+    RETURN
 }
