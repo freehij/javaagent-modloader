@@ -14,11 +14,16 @@ public class InjectionHelper {
         this.locals = locals;
     }
 
+    @Deprecated
     public Object getArg(int index) {
         if (index < 1 || index > args.length) {
             throw new IndexOutOfBoundsException("Invalid argument index: " + index);
         }
         return args[index - 1];
+    }
+
+    public Object[] getArgs() {
+        return args;
     }
 
     public static Reflector getReflector(String className) throws ClassNotFoundException {

@@ -10,4 +10,6 @@ public @interface AdvancedAt {
 
     At at();
     int ordinal() default -1;
+    // TODO
+    // boolean cancelAction() default false;
 }

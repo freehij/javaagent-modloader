@@ -5,6 +5,7 @@ import io.github.freehij.loader.annotation.AdvancedAt;
 import io.github.freehij.loader.annotation.EditClass;
 import io.github.freehij.loader.annotation.Inject;
 import io.github.freehij.loader.annotation.Local;
+import io.github.freehij.loader.constant.ArgMode;
 import io.github.freehij.loader.constant.At;
 import io.github.freehij.loader.util.InjectionHelper;
 import io.github.freehij.loader.util.Logger;
@@ -16,7 +17,7 @@ import java.util.List;
 @SuppressWarnings({"unchecked", "deprecation"})
 @EditClass("net/minecraft/bundler/Main")
 public class VanillaServerPathFixer {
-    @Inject(method = "run", descriptor = "([Ljava/lang/String;)V", at = At.NONE,
+    @Inject(method = "run", descriptor = "([Ljava/lang/String;)V", at = At.NONE, argMode = ArgMode.NONE,
             advancedAt = @AdvancedAt(at = AdvancedAt.At.ASSIGN_LOCAL, ordinal = 5),
             locals = { @Local(index = 6, type = "Ljava/util/List;") }, modifyLocals = true)
     public static void run(InjectionHelper helper) {

@@ -3,6 +3,7 @@ package io.github.freehij.injections;
 import io.github.freehij.loader.Loader;
 import io.github.freehij.loader.annotation.EditClass;
 import io.github.freehij.loader.annotation.Inject;
+import io.github.freehij.loader.constant.ArgMode;
 import io.github.freehij.loader.util.InjectionHelper;
 import io.github.freehij.loader.util.Logger;
 
@@ -14,8 +15,7 @@ import java.util.Collection;
 @SuppressWarnings("unchecked")
 @EditClass("net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider")
 public class KnotClassPathFixer {
-    @Inject(method = "locateGame",
-            descriptor = "(Lnet/fabricmc/loader/impl/launch/FabricLauncher;[Ljava/lang/String;)Z")
+    @Inject(method = "locateGame", argMode = ArgMode.NONE)
     public static void locateGame(InjectionHelper helper) throws Exception {
         Collection<Path> miscGameLibraries =
                 (Collection<Path>) helper.getReflector().getField("miscGameLibraries").get();

@@ -1,5 +1,6 @@
 package io.github.freehij.loader.annotation;
 
+import io.github.freehij.loader.constant.ArgMode;
 import io.github.freehij.loader.constant.At;
 
 import java.lang.annotation.ElementType;
@@ -17,6 +18,9 @@ public @interface Inject {
     Local[] locals() default {};
     boolean modifyLocals() default false;
     AdvancedAt[] advancedAt() default {};
-    // TODO
-    // int priority() default 0;
+    ArgMode argMode() default ArgMode.FETCH;
+    /**
+     * Lower number => higher priority.
+     */
+    int priority() default 500;
 }

@@ -3,6 +3,7 @@ package io.github.freehij.loader;
 import io.github.freehij.loader.annotation.AdvancedAt;
 import io.github.freehij.loader.annotation.Inject;
 import io.github.freehij.loader.annotation.Local;
+import io.github.freehij.loader.constant.ArgMode;
 import io.github.freehij.loader.constant.At;
 import io.github.freehij.loader.util.AnnotationParser;
 import io.github.freehij.loader.util.Logger;
@@ -47,7 +48,10 @@ public class Loader {
             }
         }
         scanInjections();
-        inst.addTransformer(new MixinTransformer(), true);
+        for (List<InjectionPoint> injectionPoints : injectionPoints.values()) {
+            injectionPoints.sort(Comparator.comparingInt(p -> p.inject.priority()));
+        }
+        inst.addTransformer(new Transformer(), true);
     }
 
     static boolean hasFabric() {
@@ -168,7 +172,7 @@ public class Loader {
 
     record InjectionPoint(Inject inject, String targetClass, String handlerClass, String handlerMethod) { }
 
-    static class MixinTransformer implements ClassFileTransformer {
+    static class Transformer implements ClassFileTransformer {
         @Override
         public byte[] transform(ClassLoader l, String className, Class<?> c,
                                 ProtectionDomain d, byte[] buffer) {
@@ -302,29 +306,38 @@ public class Loader {
         }
         mv.visitLdcInsn(Type.getObjectType(className));
         Type[] argTypes = Type.getArgumentTypes(desc);
-        mv.visitIntInsn(Opcodes.BIPUSH, argTypes.length);
-        mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
-        int localIndex = isStatic ? 0 : 1;
-        for (int i = 0; i < argTypes.length; i++) {
-            mv.visitInsn(Opcodes.DUP);
-            mv.visitIntInsn(Opcodes.BIPUSH, i);
-            mv.visitVarInsn(argTypes[i].getOpcode(Opcodes.ILOAD), localIndex);
-            boxElement(mv, argTypes[i]);
-            mv.visitInsn(Opcodes.AASTORE);
-            localIndex += argTypes[i].getSize();
+        if (argTypes.length > 0 &&
+                (injection.inject.argMode() == ArgMode.FETCH || injection.inject.argMode() == ArgMode.FETCH_APPLY)) {
+            mv.visitIntInsn(Opcodes.BIPUSH, argTypes.length);
+            mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
+            int localIndex = isStatic ? 0 : 1;
+            for (int i = 0; i < argTypes.length; i++) {
+                mv.visitInsn(Opcodes.DUP);
+                mv.visitIntInsn(Opcodes.BIPUSH, i);
+                mv.visitVarInsn(argTypes[i].getOpcode(Opcodes.ILOAD), localIndex);
+                boxElement(mv, argTypes[i]);
+                mv.visitInsn(Opcodes.AASTORE);
+                localIndex += argTypes[i].getSize();
+            }
+        } else {
+            mv.visitInsn(Opcodes.ACONST_NULL);
         }
 
         Local[] locals = injection.inject.locals();
-        mv.visitIntInsn(Opcodes.BIPUSH, locals.length);
-        mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
-        for (int i = 0; i < locals.length; i++) {
-            Local local = locals[i];
-            mv.visitInsn(Opcodes.DUP);
-            mv.visitIntInsn(Opcodes.BIPUSH, i);
-            Type localType = Type.getType(local.type());
-            mv.visitVarInsn(localType.getOpcode(Opcodes.ILOAD), local.index());
-            boxElement(mv, localType);
-            mv.visitInsn(Opcodes.AASTORE);
+        if (locals.length > 0) {
+            mv.visitIntInsn(Opcodes.BIPUSH, locals.length);
+            mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
+            for (int i = 0; i < locals.length; i++) {
+                Local local = locals[i];
+                mv.visitInsn(Opcodes.DUP);
+                mv.visitIntInsn(Opcodes.BIPUSH, i);
+                Type localType = Type.getType(local.type());
+                mv.visitVarInsn(localType.getOpcode(Opcodes.ILOAD), local.index());
+                boxElement(mv, localType);
+                mv.visitInsn(Opcodes.AASTORE);
+            }
+        } else {
+            mv.visitInsn(Opcodes.ACONST_NULL);
         }
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL,
                 "io/github/freehij/loader/util/InjectionHelper",
@@ -339,6 +352,30 @@ public class Loader {
                 injection.handlerMethod(),
                 "(Lio/github/freehij/loader/util/InjectionHelper;)V",
                 false);
+
+        if (argTypes.length > 0 && injection.inject.argMode() == ArgMode.FETCH_APPLY) {
+            mv.visitVarInsn(Opcodes.ALOAD, 100);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                    "io/github/freehij/loader/util/InjectionHelper",
+                    "getArgs",
+                    "()[Ljava/lang/Object;",
+                    false);
+            int localIndex = isStatic ? 0 : 1;
+            for (int i = 0; i < argTypes.length; i++) {
+                Type argType = argTypes[i];
+                mv.visitInsn(Opcodes.DUP);
+                mv.visitIntInsn(Opcodes.BIPUSH, i);
+                mv.visitInsn(Opcodes.AALOAD);
+                if (argType.getSort() <= Type.DOUBLE) {
+                    unbox(mv, argType);
+                } else {
+                    mv.visitTypeInsn(Opcodes.CHECKCAST, argType.getInternalName());
+                }
+                mv.visitVarInsn(argType.getOpcode(Opcodes.ISTORE), localIndex);
+                localIndex += argType.getSize();
+            }
+            mv.visitInsn(Opcodes.POP);
+        }
 
         if (injection.inject.modifyLocals() && locals.length > 0) {
             mv.visitVarInsn(Opcodes.ALOAD, 100);
