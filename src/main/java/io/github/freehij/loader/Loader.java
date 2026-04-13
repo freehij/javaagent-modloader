@@ -217,7 +217,7 @@ public class Loader {
         final int methodAccess;
         final String methodDesc, className;
         boolean hasReturned, inInjection;
-        int localStoreCount, fieldStoreCount, invokeCount;
+        int localStoreCount, fieldStoreCount, invokeCount, localLoadCount, fieldLoadCount;
 
         InjectionMethodVisitor(MethodVisitor mv, int access, String desc, InjectionPoint injection, String className) {
             super(Opcodes.ASM9, mv);
@@ -255,26 +255,21 @@ public class Loader {
                 super.visitVarInsn(opcode, var);
                 return;
             }
-            if (opcode >= Opcodes.ISTORE && opcode <= Opcodes.ASTORE) {
-                for (AdvancedAt adv : injection.inject.advancedAt()) {
-                    if (adv.at() == AdvancedAt.At.ASSIGN_LOCAL) {
-                        boolean optMatch = adv.optional().isBlank() || var == Integer.parseInt(adv.optional().trim());
-                        boolean ordMatch = adv.ordinal() == -1 || adv.ordinal() == localStoreCount;
-                        if (optMatch && ordMatch && adv.shift() == Shift.BEFORE) injectHelper();
-                    }
-                }
-                super.visitVarInsn(opcode, var);
-                for (AdvancedAt adv : injection.inject.advancedAt()) {
-                    if (adv.at() == AdvancedAt.At.ASSIGN_LOCAL) {
-                        boolean optMatch = adv.optional().isBlank() || var == Integer.parseInt(adv.optional().trim());
-                        boolean ordMatch = adv.ordinal() == -1 || adv.ordinal() == localStoreCount;
-                        if (optMatch && ordMatch && adv.shift() == Shift.AFTER) injectHelper();
-                    }
-                }
+            boolean isStore = opcode >= Opcodes.ISTORE && opcode <= Opcodes.ASTORE;
+            boolean isLoad  = opcode >= Opcodes.ILOAD  && opcode <= Opcodes.ALOAD;
+            if (isStore) {
+                handleInjection(AdvancedAt.At.ASSIGN_LOCAL, localStoreCount,
+                        adv -> adv.optional().isBlank() || var == Integer.parseInt(adv.optional().trim()),
+                        () -> super.visitVarInsn(opcode, var));
                 localStoreCount++;
-                return;
+            } else if (isLoad) {
+                handleInjection(AdvancedAt.At.FETCH_LOCAL, localLoadCount,
+                        adv -> adv.optional().isBlank() || var == Integer.parseInt(adv.optional().trim()),
+                        () -> super.visitVarInsn(opcode, var));
+                localLoadCount++;
+            } else {
+                super.visitVarInsn(opcode, var);
             }
-            super.visitVarInsn(opcode, var);
         }
 
         @Override
@@ -283,26 +278,21 @@ public class Loader {
                 super.visitFieldInsn(opcode, owner, name, descriptor);
                 return;
             }
-            if (opcode == Opcodes.PUTFIELD || opcode == Opcodes.PUTSTATIC) {
-                for (AdvancedAt adv : injection.inject.advancedAt()) {
-                    if (adv.at() == AdvancedAt.At.ASSIGN_FIELD) {
-                        boolean optMatch = adv.optional().isBlank() || name.equals(adv.optional().trim());
-                        boolean ordMatch = adv.ordinal() == -1 || adv.ordinal() == fieldStoreCount;
-                        if (optMatch && ordMatch && adv.shift() == Shift.BEFORE) injectHelper();
-                    }
-                }
-                super.visitFieldInsn(opcode, owner, name, descriptor);
-                for (AdvancedAt adv : injection.inject.advancedAt()) {
-                    if (adv.at() == AdvancedAt.At.ASSIGN_FIELD) {
-                        boolean optMatch = adv.optional().isBlank() || name.equals(adv.optional().trim());
-                        boolean ordMatch = adv.ordinal() == -1 || adv.ordinal() == fieldStoreCount;
-                        if (optMatch && ordMatch && adv.shift() == Shift.AFTER) injectHelper();
-                    }
-                }
+            boolean isPut = opcode == Opcodes.PUTFIELD || opcode == Opcodes.PUTSTATIC;
+            boolean isGet = opcode == Opcodes.GETFIELD || opcode == Opcodes.GETSTATIC;
+            if (isPut) {
+                handleInjection(AdvancedAt.At.ASSIGN_FIELD, fieldStoreCount,
+                        adv -> adv.optional().isBlank() || name.equals(adv.optional().trim()),
+                        () -> super.visitFieldInsn(opcode, owner, name, descriptor));
                 fieldStoreCount++;
-                return;
+            } else if (isGet) {
+                handleInjection(AdvancedAt.At.FETCH_FIELD, fieldLoadCount,
+                        adv -> adv.optional().isBlank() || name.equals(adv.optional().trim()),
+                        () -> super.visitFieldInsn(opcode, owner, name, descriptor));
+                fieldLoadCount++;
+            } else {
+                super.visitFieldInsn(opcode, owner, name, descriptor);
             }
-            super.visitFieldInsn(opcode, owner, name, descriptor);
         }
 
         @Override
@@ -312,27 +302,13 @@ public class Loader {
                 return;
             }
             if (opcode >= Opcodes.INVOKEVIRTUAL && opcode <= Opcodes.INVOKEDYNAMIC) {
-                for (AdvancedAt adv : injection.inject.advancedAt()) {
-                    if (adv.at() == AdvancedAt.At.INVOKE) {
-                        boolean optMatch = adv.optional().isBlank() ||
-                                matchesMethod(adv.optional().trim(), owner, name, descriptor);
-                        boolean ordMatch = adv.ordinal() == -1 || adv.ordinal() == invokeCount;
-                        if (optMatch && ordMatch && adv.shift() == Shift.BEFORE) injectHelper();
-                    }
-                }
-                super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
-                for (AdvancedAt adv : injection.inject.advancedAt()) {
-                    if (adv.at() == AdvancedAt.At.INVOKE) {
-                        boolean optMatch = adv.optional().isBlank() ||
-                                matchesMethod(adv.optional().trim(), owner, name, descriptor);
-                        boolean ordMatch = adv.ordinal() == -1 || adv.ordinal() == invokeCount;
-                        if (optMatch && ordMatch && adv.shift() == Shift.AFTER) injectHelper();
-                    }
-                }
+                handleInjection(AdvancedAt.At.INVOKE, invokeCount,
+                        adv -> adv.optional().isBlank() || matchesMethod(adv.optional().trim(), owner, name, descriptor),
+                        () -> super.visitMethodInsn(opcode, owner, name, descriptor, isInterface));
                 invokeCount++;
-                return;
+            } else {
+                super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
             }
-            super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
         }
 
         @Override
@@ -346,20 +322,38 @@ public class Loader {
             super.visitMaxs(Math.max(maxStack, 10), Math.max(maxLocals, 101));
         }
 
-        boolean matchesMethod(String pattern, String owner, String name, String descriptor) {
-            String[] parts = pattern.split(";");
-            if (parts.length == 2) {
-                return owner.equals(parts[0]) && name.equals(parts[1]);
+        private void handleInjection(AdvancedAt.At type, int currentCount,
+                                     java.util.function.Predicate<AdvancedAt> extraMatcher,
+                                     Runnable instruction) {
+            processInjections(type, currentCount, extraMatcher, true);
+            instruction.run();
+            processInjections(type, currentCount, extraMatcher, false);
+        }
+
+        private void processInjections(AdvancedAt.At type, int currentCount,
+                                       java.util.function.Predicate<AdvancedAt> extraMatcher,
+                                       boolean before) {
+            Shift targetShift = before ? Shift.BEFORE : Shift.AFTER;
+            for (AdvancedAt adv : injection.inject.advancedAt()) {
+                if (adv.at() == type && adv.shift() == targetShift) {
+                    if ((adv.ordinal() == -1 || adv.ordinal() == currentCount) && extraMatcher.test(adv)) {
+                        injectHelper();
+                    }
+                }
             }
-            String full = owner + ";" + name + descriptor;
-            return full.equals(pattern);
         }
 
-        boolean isReturn(int opcode) {
-            return (opcode >= Opcodes.IRETURN && opcode <= Opcodes.RETURN);
+        private boolean matchesMethod(String pattern, String owner, String name, String descriptor) {
+            String[] parts = pattern.split(";");
+            if (parts.length == 2) return owner.equals(parts[0]) && name.equals(parts[1]);
+            return (owner + ";" + name + descriptor).equals(pattern);
         }
 
-        void injectHelper() {
+        private boolean isReturn(int opcode) {
+            return opcode >= Opcodes.IRETURN && opcode <= Opcodes.RETURN;
+        }
+
+        private void injectHelper() {
             if (inInjection) return;
             inInjection = true;
             generateHelperCall(this, methodAccess, methodDesc, injection, className);

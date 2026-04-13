@@ -8,7 +8,9 @@ public @interface AdvancedAt {
     enum At {
         ASSIGN_LOCAL,
         ASSIGN_FIELD,
-        INVOKE
+        INVOKE,
+        FETCH_LOCAL,
+        FETCH_FIELD
     }
 
     At at();

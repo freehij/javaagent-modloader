@@ -46,7 +46,7 @@ public class InjectionHelper {
     }
 
     public void setCancelled(boolean cancel) {
-        this.cancelled = cancel;
+        cancelled = cancel;
     }
 
     public boolean isCancelled() {
@@ -54,7 +54,7 @@ public class InjectionHelper {
     }
 
     public void setReturnValue(Object value) {
-        this.returnValue = value;
+        returnValue = value;
     }
 
     public Object getReturnValue() {
@@ -62,7 +62,7 @@ public class InjectionHelper {
     }
 
     public Object[] getLocals() {
-        return this.locals;
+        return locals;
     }
 
     public Object[] getOptional() {

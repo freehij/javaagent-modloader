@@ -58,7 +58,7 @@ public class Reflector {
     }
 
     Field findField(String fieldName) throws NoSuchFieldException {
-        Class<?> current = this.clazz;
+        Class<?> current = clazz;
         while (current != null) {
             try {
                 return current.getDeclaredField(fieldName);
@@ -78,8 +78,8 @@ public class Reflector {
             Field field = findField(fieldName);
             field.setAccessible(true);
             boolean isStatic = Modifier.isStatic(field.getModifiers());
-            if (!isStatic && this.object == null) throw new NotStaticException("Not a static field: " + fieldName);
-            Object value = field.get(isStatic ? null : this.object);
+            if (!isStatic && object == null) throw new NotStaticException("Not a static field: " + fieldName);
+            Object value = field.get(isStatic ? null : object);
             return new Reflector(field.getType(), value);
         } catch (Exception e) {
             throw new RuntimeException("Failed to get field: " + fieldName, e);
@@ -94,8 +94,8 @@ public class Reflector {
             Field field = findField(fieldName);
             field.setAccessible(true);
             boolean isStatic = Modifier.isStatic(field.getModifiers());
-            if (!isStatic && this.object == null) throw new NotStaticException("Not a static field: " + fieldName);
-            field.set(isStatic ? null : this.object, value);
+            if (!isStatic && object == null) throw new NotStaticException("Not a static field: " + fieldName);
+            field.set(isStatic ? null : object, value);
         } catch (Exception e) {
             throw new RuntimeException("Failed to set field: " + fieldName, e);
         }
@@ -103,7 +103,7 @@ public class Reflector {
 
     public Reflector invoke(String methodName, String descriptor, Object... args) {
         //calculate the paramTypes and call invokeRaw
-        return this.invokeRaw(methodName, parseDescriptor(descriptor), args);
+        return invokeRaw(methodName, parseDescriptor(descriptor), args);
     }
 
     public Reflector invokeRaw(String methodName, Class<?>[] paramTypes, Object... args) {
@@ -113,7 +113,7 @@ public class Reflector {
         //throws Exception if method is not static and no object instance is presented
         //throws RuntimeException when other errors occur
         try {
-            Class<?> searchClass = this.clazz;
+            Class<?> searchClass = clazz;
             Method method = null;
             while (searchClass != null && method == null) {
                 try {
@@ -127,13 +127,13 @@ public class Reflector {
             }
             method.setAccessible(true);
             Object result;
-            if (this.object == null) {
+            if (object == null) {
                 if (!Modifier.isStatic(method.getModifiers())) {
                     throw new NotStaticException("Not a static method: " + methodName);
                 }
                 result = method.invoke(null, args);
             } else {
-                result = method.invoke(this.object, args);
+                result = method.invoke(object, args);
             }
             return new Reflector(method.getReturnType(), result);
         } catch (Exception var6) {
@@ -222,7 +222,7 @@ public class Reflector {
     }
 
     public boolean isStatic() {
-        return this.object == null;
+        return object == null;
     }
 
     public static class NotStaticException extends Exception {
