@@ -6,12 +6,18 @@ public class InjectionHelper {
     final Object[] args, locals;
     boolean cancelled = false;
     Object returnValue;
+    Object[] optional;
 
-    public InjectionHelper(Object instance, Class<?> type, Object[] args, Object[] locals) {
+    public InjectionHelper(Object instance, Class<?> type, Object[] args, Object[] locals, Object[] optional) {
         this.instance = instance;
         this.type = type;
         this.args = args;
         this.locals = locals;
+        this.optional = optional;
+    }
+
+    public InjectionHelper(Object instance, Class<?> type, Object[] args, Object[] locals) {
+        this(instance, type, args, locals, null);
     }
 
     @Deprecated
@@ -57,6 +63,14 @@ public class InjectionHelper {
 
     public Object[] getLocals() {
         return this.locals;
+    }
+
+    public Object[] getOptional() {
+        return optional;
+    }
+
+    public void setOptional(Object[] optional) {
+        this.optional = optional;
     }
 
     public static Reflector getMinecraft() {
