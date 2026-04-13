@@ -8,11 +8,12 @@ version = '1.0.0-SNAPSHOT'
 
 repositories {
     mavenCentral()
+    maven { url = 'https://maven.fabricmc.net/' }
 }
 
 dependencies {
-    implementation 'org.ow2.asm:asm:9.8'
-    implementation 'org.ow2.asm:asm-commons:9.8'
+    implementation 'net.lenni0451.classtransform:core:1.14.1'
+    compileOnly 'net.fabricmc:fabric-loader:0.19.1'
 }
 
 jar {
@@ -27,7 +28,7 @@ jar {
 
 shadowJar {
     relocate 'org.objectweb.asm', 'relocated.org.objectweb.asm'
-    relocate 'org.objectweb.asm.commons', 'relocated.org.objectweb.asm.commons'
+    relocate 'net.lenni0451.classtransform', 'relocated.net.lenni0451.classtransform'
 }
 
 tasks.build.dependsOn tasks.shadowJar
