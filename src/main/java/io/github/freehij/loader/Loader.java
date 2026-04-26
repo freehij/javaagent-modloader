@@ -21,6 +21,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.ProtectionDomain;
 import java.util.*;
+import java.util.function.Predicate;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
@@ -141,15 +142,16 @@ public class Loader {
         AnnotationParser.ParsedClass parsed = AnnotationParser.parseClassForInjections(className, loader);
         if (parsed.editClassTarget == null) return;
 
-        String targetClassName = parsed.editClassTarget;
-        for (AnnotationParser.ParsedMethod method : parsed.methods) {
-            injectionPoints.computeIfAbsent(targetClassName, k -> new ArrayList<>())
-                    .add(new InjectionPoint(
-                            method.inject,
-                            targetClassName,
-                            className,
-                            method.name
-                    ));
+        for (String targetClassName : parsed.editClassTarget) {
+            for (AnnotationParser.ParsedMethod method : parsed.methods) {
+                injectionPoints.computeIfAbsent(targetClassName, k -> new ArrayList<>())
+                        .add(new InjectionPoint(
+                                method.inject,
+                                targetClassName,
+                                className,
+                                method.name
+                        ));
+            }
         }
     }
 
@@ -175,8 +177,7 @@ public class Loader {
 
     static class Transformer implements ClassFileTransformer {
         @Override
-        public byte[] transform(ClassLoader l, String className, Class<?> c,
-                                ProtectionDomain d, byte[] buffer) {
+        public byte[] transform(ClassLoader l, String className, Class<?> c, ProtectionDomain d, byte[] buffer) {
             if (!injectionPoints.containsKey(className)) return null;
             Logger.debug("Loading " + className + ", loader: " + l.getName(), this);
             ClassReader cr = new ClassReader(buffer);
@@ -195,13 +196,12 @@ public class Loader {
         }
 
         @Override
-        public MethodVisitor visitMethod(int access, String name, String desc,
-                                         String sig, String[] ex) {
+        public MethodVisitor visitMethod(int access, String name, String desc, String sig, String[] ex) {
             MethodVisitor mv = super.visitMethod(access, name, desc, sig, ex);
             List<InjectionPoint> points = injectionPoints.get(className);
             if (points == null) return mv;
             for (InjectionPoint point : points) {
-                if (point.inject.method().equals(name) &&
+                if (Arrays.asList(point.inject.method()).contains(name) &&
                         (point.inject.descriptor().isEmpty() || point.inject.descriptor().equals(desc))) {
                     Logger.debug("Transforming " + name + desc +
                             ", handler: " + point.handlerClass + "." + point.handlerMethod, this);
@@ -303,7 +303,8 @@ public class Loader {
             }
             if (opcode >= Opcodes.INVOKEVIRTUAL && opcode <= Opcodes.INVOKEDYNAMIC) {
                 handleInjection(AdvancedAt.At.INVOKE, invokeCount,
-                        adv -> adv.optional().isBlank() || matchesMethod(adv.optional().trim(), owner, name, descriptor),
+                        adv -> adv.optional().isBlank() || matchesMethod(adv.optional().trim(), owner, name,
+                                descriptor),
                         () -> super.visitMethodInsn(opcode, owner, name, descriptor, isInterface));
                 invokeCount++;
             } else {
@@ -322,17 +323,15 @@ public class Loader {
             super.visitMaxs(Math.max(maxStack, 10), Math.max(maxLocals, 101));
         }
 
-        private void handleInjection(AdvancedAt.At type, int currentCount,
-                                     java.util.function.Predicate<AdvancedAt> extraMatcher,
-                                     Runnable instruction) {
+        void handleInjection(AdvancedAt.At type, int currentCount, Predicate<AdvancedAt> extraMatcher,
+                             Runnable instruction) {
             processInjections(type, currentCount, extraMatcher, true);
             instruction.run();
             processInjections(type, currentCount, extraMatcher, false);
         }
 
-        private void processInjections(AdvancedAt.At type, int currentCount,
-                                       java.util.function.Predicate<AdvancedAt> extraMatcher,
-                                       boolean before) {
+        void processInjections(AdvancedAt.At type, int currentCount, Predicate<AdvancedAt> extraMatcher,
+                               boolean before) {
             Shift targetShift = before ? Shift.BEFORE : Shift.AFTER;
             for (AdvancedAt adv : injection.inject.advancedAt()) {
                 if (adv.at() == type && adv.shift() == targetShift) {
@@ -343,17 +342,17 @@ public class Loader {
             }
         }
 
-        private boolean matchesMethod(String pattern, String owner, String name, String descriptor) {
+        boolean matchesMethod(String pattern, String owner, String name, String descriptor) {
             String[] parts = pattern.split(";");
             if (parts.length == 2) return owner.equals(parts[0]) && name.equals(parts[1]);
             return (owner + ";" + name + descriptor).equals(pattern);
         }
 
-        private boolean isReturn(int opcode) {
+        boolean isReturn(int opcode) {
             return opcode >= Opcodes.IRETURN && opcode <= Opcodes.RETURN;
         }
 
-        private void injectHelper() {
+        void injectHelper() {
             if (inInjection) return;
             inInjection = true;
             generateHelperCall(this, methodAccess, methodDesc, injection, className);

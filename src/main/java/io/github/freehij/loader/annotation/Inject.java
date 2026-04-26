@@ -11,7 +11,7 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.METHOD)
 public @interface Inject {
-    String method() default "<init>";
+    String[] method() default "<init>";
     String descriptor() default "";
     @Deprecated
     At at() default At.HEAD;

@@ -1,4 +1,5 @@
 package io.github.freehij.loader.util;
+
 import io.github.freehij.loader.annotation.Inject;
 import org.objectweb.asm.*;
 
@@ -10,12 +11,13 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.*;
+import java.util.function.Consumer;
 
-@SuppressWarnings("unchecked")
+@SuppressWarnings({"unchecked", "rawtypes"})
 public final class AnnotationParser {
     public static ParsedClass parseClassForInjections(String className, ClassLoader loader) {
         ClassData data = parseClass(className, loader);
-        if (data == null || data.editClassTarget == null) {
+        if (data == null || data.editClassTarget == null || data.editClassTarget.length == 0) {
             return new ParsedClass(null, Collections.emptyList());
         }
 
@@ -28,7 +30,7 @@ public final class AnnotationParser {
         return new ParsedClass(data.editClassTarget, methods);
     }
 
-    private static ClassData parseClass(String className, ClassLoader loader) {
+    static ClassData parseClass(String className, ClassLoader loader) {
         try (InputStream is = loader.getResourceAsStream(className + ".class")) {
             if (is == null) return null;
             ClassReader cr = new ClassReader(is);
@@ -40,16 +42,25 @@ public final class AnnotationParser {
         }
     }
 
-    private static class ClassVisitorImpl extends ClassVisitor {
-        private String editClassValue;
-        private final Map<String, AnnotationData> injectAnnotations = new HashMap<>();
+    static class ClassVisitorImpl extends ClassVisitor {
+        String[] editClassValues;
+        final Map<String, AnnotationData> injectAnnotations = new HashMap<>();
 
         ClassVisitorImpl() { super(Opcodes.ASM9); }
 
         @Override
         public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
             if (descriptor.equals("Lio/github/freehij/loader/annotation/EditClass;")) {
-                return new ValueCollector(values -> editClassValue = (String) values.get("value"));
+                return new ValueCollector(values -> {
+                    Object raw = values.get("value");
+                    if (raw instanceof String) {
+                        editClassValues = new String[]{(String) raw};
+                    } else if (raw instanceof Object[] arr) {
+                        String[] sa = new String[arr.length];
+                        for (int i = 0; i < arr.length; i++) sa[i] = (String) arr[i];
+                        editClassValues = sa;
+                    }
+                });
             }
             return null;
         }
@@ -69,15 +80,15 @@ public final class AnnotationParser {
         }
 
         ClassData getData() {
-            return new ClassData(editClassValue, injectAnnotations);
+            return new ClassData(editClassValues, injectAnnotations);
         }
     }
 
-    private static class ValueCollector extends AnnotationVisitor {
-        private final Map<String, Object> values = new HashMap<>();
-        private final java.util.function.Consumer<Map<String, Object>> onFinish;
+    static class ValueCollector extends AnnotationVisitor {
+        final Map<String, Object> values = new HashMap<>();
+        final Consumer<Map<String, Object>> onFinish;
 
-        ValueCollector(java.util.function.Consumer<Map<String, Object>> onFinish) {
+        ValueCollector(Consumer<Map<String, Object>> onFinish) {
             super(Opcodes.ASM9);
             this.onFinish = onFinish;
         }
@@ -98,7 +109,7 @@ public final class AnnotationParser {
         @Override
         public AnnotationVisitor visitArray(String name) {
             return new AnnotationVisitor(Opcodes.ASM9) {
-                private final List<Object> list = new ArrayList<>();
+                final List<Object> list = new ArrayList<>();
 
                 @Override
                 public void visit(String ignored, Object value) {
@@ -127,37 +138,34 @@ public final class AnnotationParser {
         }
     }
 
-    private record ClassData(String editClassTarget, Map<String, AnnotationData> injectAnnotations) { }
+    record ClassData(String[] editClassTarget, Map<String, AnnotationData> injectAnnotations) { }
 
-    private record AnnotationData(String descriptor, Map<String, Object> attributes) { }
+    record AnnotationData(String descriptor, Map<String, Object> attributes) { }
 
-    private record EnumPlaceholder(String enumType, String constantName) {
+    record EnumPlaceholder(String enumType, String constantName) {
         Enum<?> toEnum(ClassLoader loader) {
-                try {
-                    String className = enumType.substring(1, enumType.length() - 1).replace('/', '.');
-                    Class<Enum> clazz = (Class<Enum>) Class.forName(className, false, loader);
-                    return Enum.valueOf(clazz, constantName);
-                } catch (ClassNotFoundException e) {
-                    throw new RuntimeException("Enum class not found: " + enumType, e);
-                }
+            try {
+                String className = enumType.substring(1, enumType.length() - 1).replace('/', '.');
+                Class<Enum> clazz = (Class<Enum>) Class.forName(className, false, loader);
+                return Enum.valueOf(clazz, constantName);
+            } catch (ClassNotFoundException e) {
+                throw new RuntimeException("Enum class not found: " + enumType, e);
             }
         }
+    }
 
-    private static <A extends Annotation> A createAnnotationProxy(Class<A> annotationType,
-                                                                  AnnotationData data,
-                                                                  ClassLoader loader) {
-        return (A) Proxy.newProxyInstance(
-                loader,
-                new Class<?>[]{annotationType},
+    static <A extends Annotation> A createAnnotationProxy(Class<A> annotationType, AnnotationData data,
+                                                          ClassLoader loader) {
+        return (A) Proxy.newProxyInstance(loader, new Class<?>[]{annotationType},
                 new AnnotationInvocationHandler(annotationType, data, loader)
         );
     }
 
-    private static class AnnotationInvocationHandler implements InvocationHandler {
-        private final Class<? extends Annotation> annotationType;
-        private final AnnotationData data;
-        private final ClassLoader loader;
-        private final Map<String, Object> resolved = new HashMap<>();
+    static class AnnotationInvocationHandler implements InvocationHandler {
+        final Class<? extends Annotation> annotationType;
+        final AnnotationData data;
+        final ClassLoader loader;
+        final Map<String, Object> resolved = new HashMap<>();
 
         AnnotationInvocationHandler(Class<? extends Annotation> annotationType, AnnotationData data, ClassLoader loader) {
             this.annotationType = annotationType;
@@ -184,37 +192,38 @@ public final class AnnotationParser {
             return value;
         }
 
-        private Object resolve(Object raw, Class<?> expectedType) {
+        Object resolve(Object raw, Class<?> expectedType) {
             if (raw == null) return null;
-            if (!(raw instanceof AnnotationData) && !(raw instanceof EnumPlaceholder)
-                    && !(raw.getClass().isArray() && hasComplexElements(raw))) {
-                return raw;
+            if (raw instanceof String && expectedType == String[].class) {
+                return new String[]{(String) raw};
             }
-            if (raw instanceof AnnotationData nested) {
-                String className = nested.descriptor.substring(1, nested.descriptor.length() - 1).replace('/', '.');
-                try {
-                    Class<? extends Annotation> nestedType = (Class<? extends Annotation>) Class.forName(className,
-                            false, loader);
-                    return createAnnotationProxy(nestedType, nested, loader);
-                } catch (ClassNotFoundException e) {
-                    throw new RuntimeException("Annotation class not found: " + className, e);
+            if (!raw.getClass().isArray()) {
+                if (!(raw instanceof AnnotationData) && !(raw instanceof EnumPlaceholder)) {
+                    return raw;
+                }
+                if (raw instanceof AnnotationData nested) {
+                    String className = nested.descriptor.substring(1, nested.descriptor.length() - 1).replace('/', '.');
+                    try {
+                        Class<? extends Annotation> nestedType = (Class<? extends Annotation>) Class.forName(className,
+                                false, loader);
+                        return createAnnotationProxy(nestedType, nested, loader);
+                    } catch (ClassNotFoundException e) {
+                        throw new RuntimeException("Annotation class not found: " + className, e);
+                    }
+                }
+                if (raw instanceof EnumPlaceholder) {
+                    return ((EnumPlaceholder) raw).toEnum(loader);
                 }
             }
-            if (raw instanceof EnumPlaceholder) {
-                return ((EnumPlaceholder) raw).toEnum(loader);
+            int len = Array.getLength(raw);
+            Object resolvedArray = Array.newInstance(expectedType.getComponentType(), len);
+            for (int i = 0; i < len; i++) {
+                Array.set(resolvedArray, i, resolve(Array.get(raw, i), expectedType.getComponentType()));
             }
-            if (raw.getClass().isArray()) {
-                int len = Array.getLength(raw);
-                Object resolvedArray = Array.newInstance(expectedType.getComponentType(), len);
-                for (int i = 0; i < len; i++) {
-                    Array.set(resolvedArray, i, resolve(Array.get(raw, i), expectedType.getComponentType()));
-                }
-                return resolvedArray;
-            }
-            return raw;
+            return resolvedArray;
         }
 
-        private boolean hasComplexElements(Object array) {
+        boolean hasComplexElements(Object array) {
             for (int i = 0; i < Array.getLength(array); i++) {
                 Object e = Array.get(array, i);
                 if (e instanceof AnnotationData || e instanceof EnumPlaceholder) return true;
@@ -222,7 +231,7 @@ public final class AnnotationParser {
             return false;
         }
 
-        private String annotationToString() {
+        String annotationToString() {
             StringBuilder sb = new StringBuilder("@").append(annotationType.getName()).append("(");
             boolean first = true;
             for (Method m : annotationType.getDeclaredMethods()) {
@@ -238,7 +247,7 @@ public final class AnnotationParser {
             return sb.append(")").toString();
         }
 
-        private String valueToString(Object val) {
+        String valueToString(Object val) {
             if (val instanceof String) return "\"" + val + "\"";
             if (val instanceof Character) return "'" + val + "'";
             if (val.getClass().isArray()) {
@@ -253,7 +262,7 @@ public final class AnnotationParser {
             return String.valueOf(val);
         }
 
-        private int annotationHashCode() {
+        int annotationHashCode() {
             int hash = 0;
             for (Method m : annotationType.getDeclaredMethods()) {
                 try {
@@ -264,7 +273,7 @@ public final class AnnotationParser {
             return hash;
         }
 
-        private int valueHashCode(Object val) {
+        int valueHashCode(Object val) {
             if (val == null) return 0;
             if (!val.getClass().isArray()) return val.hashCode();
             int h = 1;
@@ -275,7 +284,7 @@ public final class AnnotationParser {
             return h;
         }
 
-        private boolean annotationEquals(Object other) {
+        boolean annotationEquals(Object other) {
             if (this == other) return true;
             if (!annotationType.isInstance(other)) return false;
             for (Method m : annotationType.getDeclaredMethods()) {
@@ -290,7 +299,7 @@ public final class AnnotationParser {
             return true;
         }
 
-        private boolean valuesEqual(Object a, Object b) {
+        boolean valuesEqual(Object a, Object b) {
             if (a == b) return true;
             if (a == null || b == null) return false;
             if (a.getClass() != b.getClass()) return false;
@@ -307,10 +316,10 @@ public final class AnnotationParser {
     }
 
     public static class ParsedClass {
-        public final String editClassTarget;
+        public final String[] editClassTarget;
         public final List<ParsedMethod> methods;
 
-        ParsedClass(String editClassTarget, List<ParsedMethod> methods) {
+        ParsedClass(String[] editClassTarget, List<ParsedMethod> methods) {
             this.editClassTarget = editClassTarget;
             this.methods = methods;
         }
