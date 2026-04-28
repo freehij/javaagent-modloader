@@ -10,7 +10,7 @@ import java.util.Date;
 public class Logger {
     static final boolean DEBUG = System.getProperty("loader.DEBUG", "").equalsIgnoreCase("true");
     public static SimpleDateFormat dateFormat = new SimpleDateFormat("HH:mm:ss");
-    static final PrintStream STDOUT = new PrintStream(
+    public static final PrintStream STDOUT = new PrintStream(
             new FileOutputStream(FileDescriptor.out), true, StandardCharsets.UTF_8
     );
 

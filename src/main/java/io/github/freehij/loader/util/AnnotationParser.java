@@ -14,7 +14,7 @@ import java.util.*;
 import java.util.function.Consumer;
 
 @SuppressWarnings({"unchecked", "rawtypes"})
-public final class AnnotationParser {
+public class AnnotationParser {
     public static ParsedClass parseClassForInjections(String className, ClassLoader loader) {
         ClassData data = parseClass(className, loader);
         if (data == null || data.editClassTarget == null || data.editClassTarget.length == 0) {

@@ -5,6 +5,7 @@ import io.github.freehij.loader.annotation.Inject;
 import io.github.freehij.loader.annotation.Local;
 import io.github.freehij.loader.constant.ArgMode;
 import io.github.freehij.loader.constant.At;
+import io.github.freehij.loader.constant.FailStrategy;
 import io.github.freehij.loader.constant.Shift;
 import io.github.freehij.loader.util.AnnotationParser;
 import io.github.freehij.loader.util.Logger;
@@ -173,7 +174,23 @@ public class Loader {
         }
     }
 
-    record InjectionPoint(Inject inject, String targetClass, String handlerClass, String handlerMethod) { }
+    static class InjectionPoint {
+        final Inject inject;
+        final String targetClass, handlerClass, handlerMethod;
+        public boolean satisfied = false;
+
+        public InjectionPoint(Inject inject, String targetClass, String handlerClass, String handlerMethod) {
+            this.inject = inject;
+            this.targetClass = targetClass;
+            this.handlerClass = handlerClass;
+            this.handlerMethod = handlerMethod;
+        }
+
+        @Override
+        public String toString() {
+            return handlerClass + " -> " + handlerMethod;
+        }
+    }
 
     static class Transformer implements ClassFileTransformer {
         @Override
@@ -189,26 +206,41 @@ public class Loader {
 
     static class InjectionClassVisitor extends ClassVisitor {
         final String className;
+        final List<InjectionPoint> points;
 
         InjectionClassVisitor(ClassVisitor cv, String className) {
             super(Opcodes.ASM9, cv);
             this.className = className;
+            points = injectionPoints.get(className);
         }
 
         @Override
         public MethodVisitor visitMethod(int access, String name, String desc, String sig, String[] ex) {
             MethodVisitor mv = super.visitMethod(access, name, desc, sig, ex);
-            List<InjectionPoint> points = injectionPoints.get(className);
             if (points == null) return mv;
             for (InjectionPoint point : points) {
                 if (Arrays.asList(point.inject.method()).contains(name) &&
                         (point.inject.descriptor().isEmpty() || point.inject.descriptor().equals(desc))) {
                     Logger.debug("Transforming " + name + desc +
                             ", handler: " + point.handlerClass + "." + point.handlerMethod, this);
+                    point.satisfied = true;
                     mv = new InjectionMethodVisitor(mv, access, desc, point, this.className);
                 }
             }
             return mv;
+        }
+
+        @Override
+        public void visitEnd() {
+            for (InjectionPoint point : points) {
+                if (point.satisfied) continue;
+                FailStrategy failStrategy = point.inject.failStrategy();
+                if (failStrategy.ordinal() > 0) {
+                    new NoSuchMethodException("Couldn't find a method required to satisfy " + point)
+                            .printStackTrace(Logger.STDOUT);
+                    if (failStrategy == FailStrategy.HARD) System.exit(2);
+                }
+            }
         }
     }
 
@@ -222,8 +254,8 @@ public class Loader {
         InjectionMethodVisitor(MethodVisitor mv, int access, String desc, InjectionPoint injection, String className) {
             super(Opcodes.ASM9, mv);
             this.injection = injection;
-            this.methodAccess = access;
-            this.methodDesc = desc;
+            methodAccess = access;
+            methodDesc = desc;
             this.className = className;
         }
 
@@ -415,8 +447,8 @@ public class Loader {
         mv.visitVarInsn(Opcodes.ASTORE, 100);
         mv.visitVarInsn(Opcodes.ALOAD, 100);
         mv.visitMethodInsn(Opcodes.INVOKESTATIC,
-                injection.handlerClass(),
-                injection.handlerMethod(),
+                injection.handlerClass,
+                injection.handlerMethod,
                 "(Lio/github/freehij/loader/util/InjectionHelper;)V",
                 false);
 

@@ -2,6 +2,7 @@ package io.github.freehij.loader.annotation;
 
 import io.github.freehij.loader.constant.ArgMode;
 import io.github.freehij.loader.constant.At;
+import io.github.freehij.loader.constant.FailStrategy;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -23,4 +24,5 @@ public @interface Inject {
      * Lower number => higher priority.
      */
     int priority() default 500;
+    FailStrategy failStrategy() default FailStrategy.NOTIFY;
 }
