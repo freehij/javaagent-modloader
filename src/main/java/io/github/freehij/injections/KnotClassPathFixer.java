@@ -9,7 +9,6 @@ import io.github.freehij.loader.util.Logger;
 
 import java.net.URL;
 import java.nio.file.Path;
-import java.security.CodeSource;
 import java.util.Collection;
 
 @SuppressWarnings("unchecked")
@@ -19,10 +18,6 @@ public class KnotClassPathFixer {
     public static void locateGame(InjectionHelper helper) throws Exception {
         Collection<Path> miscGameLibraries =
                 (Collection<Path>) helper.getReflector().getField("miscGameLibraries").get();
-        try {
-            CodeSource cs = Loader.class.getProtectionDomain().getCodeSource();
-            if (cs != null) miscGameLibraries.add(Path.of(cs.getLocation().toURI()));
-        } catch (Exception ignored) {}
         for (URL url : Loader.getModUrls()) miscGameLibraries.add(Path.of(url.toURI()));
         Logger.debug("Applied knot class path fix", KnotClassPathFixer.class.getName());
     }

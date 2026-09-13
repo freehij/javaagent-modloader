@@ -34,11 +34,13 @@ public class Loader {
     static final List<URL> modUrls = new ArrayList<>();
 
     public static void premain(String args, Instrumentation inst) {
-        defineMods(true);
-        processInjectionClass("io/github/freehij/injections/VanillaServerPathFixer",
+        defineMods();
+        processInjectionClass("io/github/freehij/injections/VanillaServerClassPathFixer",
                 Thread.currentThread().getContextClassLoader());
         if (hasFabric()) {
             processInjectionClass("io/github/freehij/injections/KnotClassPathFixer",
+                    Thread.currentThread().getContextClassLoader());
+            processInjectionClass("io/github/freehij/injections/KntFixr2",
                     Thread.currentThread().getContextClassLoader());
         } else if (hasNeoForge()) {
             processInjectionClass("io/github/freehij/injections/FancyMLClassPathFixer",
@@ -64,11 +66,11 @@ public class Loader {
         try {
             Class.forName("net.fabricmc.loader.impl.FabricLoaderImpl");
             return true;
-        } catch(ClassNotFoundException ignored) {}
+        } catch (ClassNotFoundException ignored) {}
         try {
             Class.forName("net.fabricmc.installer.Main");
             return true;
-        } catch(ClassNotFoundException ignored) {}
+        } catch (ClassNotFoundException ignored) {}
         return false;
     }
 
@@ -81,7 +83,7 @@ public class Loader {
         return false;
     }
 
-    static void defineMods(boolean log) {
+    static void defineMods() {
         mods.add(new ModInfo(
                 "loader",
                 "Loader",
@@ -93,11 +95,9 @@ public class Loader {
                 null
         ));
         loadMods();
-        if (log) {
-            Logger.info("Found mods:", "Loader");
-            for (ModInfo mod : mods) {
-                Logger.info("	- " + mod.toString(), "Loader");
-            }
+        Logger.info("Found mods:", "Loader");
+        for (ModInfo mod : mods) {
+            Logger.info("	- " + mod.toString(), "Loader");
         }
     }
 
@@ -173,8 +173,6 @@ public class Loader {
     }
 
     public static List<ModInfo> getMods() {
-        // TODO: proper fix for evil knot conflicts
-        if (mods.isEmpty()) defineMods(false);
         return Collections.unmodifiableList(mods);
     }
 

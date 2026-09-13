@@ -3,7 +3,7 @@ plugins {
     id 'com.gradleup.shadow' version '9.3.2'
 }
 
-group = 'met.freehij.loader'
+group = 'io.github.freehij'
 version = '1.0.0-SNAPSHOT'
 
 repositories {
@@ -11,8 +11,8 @@ repositories {
 }
 
 dependencies {
-    implementation 'org.ow2.asm:asm:9.8'
-    implementation 'org.ow2.asm:asm-commons:9.8'
+    implementation 'org.ow2.asm:asm:9.10.1'
+    implementation 'org.ow2.asm:asm-commons:9.10.1'
 }
 
 jar {
