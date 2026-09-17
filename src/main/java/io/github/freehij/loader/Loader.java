@@ -9,6 +9,8 @@ import io.github.freehij.loader.constant.FailStrategy;
 import io.github.freehij.loader.constant.Shift;
 import io.github.freehij.loader.util.AnnotationParser;
 import io.github.freehij.loader.util.Logger;
+import net.lenni0451.classtransform.TransformerManager;
+import net.lenni0451.classtransform.utils.tree.IClassProvider;
 import org.objectweb.asm.*;
 
 import java.io.*;
@@ -23,6 +25,7 @@ import java.nio.file.Paths;
 import java.security.ProtectionDomain;
 import java.util.*;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
@@ -30,14 +33,30 @@ import java.util.jar.JarFile;
 public class Loader {
     static final String VERSION = "a1.0.0";
     static final Map<String, List<InjectionPoint>> injectionPoints = new HashMap<>();
+    static final Map<String, Supplier<byte[]>> transformersBytes = new HashMap<>();
     static final List<ModInfo> mods = new ArrayList<>();
     static final List<URL> modUrls = new ArrayList<>();
+    static final TransformerManager transformerManager = new TransformerManager(new ModClassProvider());
+
+    static class ModClassProvider implements IClassProvider {
+        @Override
+        public byte[] getClass(String name) throws ClassNotFoundException {
+            Supplier<byte[]> bytes = transformersBytes.get(name);
+            if (bytes == null) throw new ClassNotFoundException("Class " + name +" not found.");
+            return bytes.get();
+        }
+
+        @Override
+        public Map<String, Supplier<byte[]>> getAllClasses() {
+            return transformersBytes;
+        }
+    }
 
     public static void premain(String args, Instrumentation inst) {
         defineMods();
         processInjectionClass("io/github/freehij/injections/VanillaServerClassPathFixer",
                 Thread.currentThread().getContextClassLoader());
-        if (hasFabric()) {
+        if (hasFabricOrQuilt()) {
             processInjectionClass("io/github/freehij/injections/KnotClassPathFixer",
                     Thread.currentThread().getContextClassLoader());
             processInjectionClass("io/github/freehij/injections/KntFixr2",
@@ -51,7 +70,7 @@ public class Loader {
                     inst.appendToSystemClassLoaderSearch(new JarFile(url.getFile()));
                 } catch (IOException e) {
                     System.err.println("Failed to add mod JAR to System ClassLoader search path: " + url);
-                    e.printStackTrace();
+                    e.printStackTrace(Logger.STDOUT);
                 }
             }
         }
@@ -60,9 +79,10 @@ public class Loader {
             injectionPoints.sort(Comparator.comparingInt(p -> p.inject.priority()));
         }
         inst.addTransformer(new Transformer(), true);
+        transformerManager.hookInstrumentation(inst);
     }
 
-    static boolean hasFabric() {
+    static boolean hasFabricOrQuilt() {
         try {
             Class.forName("net.fabricmc.loader.impl.FabricLoaderImpl");
             return true;
@@ -92,6 +112,8 @@ public class Loader {
                 "Synthetic loader modid for dependency checking.",
                 "No license",
                 new ArrayList<>(),
+                new ArrayList<>(),
+                new ArrayList<>(),
                 null
         ));
         loadMods();
@@ -113,18 +135,29 @@ public class Loader {
                     try (JarFile jar = new JarFile(jarPath.toFile())) {
                         JarEntry config = jar.getJarEntry("mod.properties");
                         if (config == null) continue;
-
                         Properties props = new Properties();
                         props.load(jar.getInputStream(config));
-
+                        ArrayList<String> fields = new ArrayList<>(props.stringPropertyNames());
+                        String modid = props.getProperty("modid");
+                        String name = props.getProperty("name");
+                        String version = props.getProperty("version");
+                        if (modid == null || modid.trim().isEmpty() ||
+                                version == null || version.trim().isEmpty()) {
+                            throw new ModLoadingError("Missing required fields in mod.properties for " + jarPath);
+                        }
+                        if (name == null || name.trim().isEmpty()) {
+                            name = modid;
+                        }
                         ModInfo mod = new ModInfo(
-                                props.getProperty("modid"),
-                                props.getProperty("name"),
-                                props.getProperty("version"),
-                                props.getProperty("creator"),
+                                modid,
+                                name,
+                                version,
+                                props.getProperty("creator", "-"),
                                 props.getProperty("description", "No description"),
                                 props.getProperty("license", "No license"),
-                                Arrays.asList(props.getProperty("injections", "").split(",")),
+                                Arrays.asList(props.getProperty("injections", "").replace('.', '/').split(",")),
+                                Arrays.asList(props.getProperty("transformers", "").replace('.', '/').split(",")),
+                                fields,
                                 jarPath
                         );
                         mods.add(mod);
@@ -133,7 +166,7 @@ public class Loader {
                 }
             }
         } catch (IOException e) {
-            e.printStackTrace();
+            e.printStackTrace(Logger.STDOUT);
         }
     }
 
@@ -142,12 +175,24 @@ public class Loader {
         try (URLClassLoader modLoader = new URLClassLoader(urls, Thread.currentThread().getContextClassLoader())) {
             for (ModInfo mod : mods) {
                 for (String className : mod.injections) {
-                    if (className.isEmpty()) continue;
-                    processInjectionClass(className, modLoader);
+                    if (!className.isEmpty()) processInjectionClass(className, modLoader);
+                }
+                if (mod.jarPath == null) continue;
+                try (JarFile jar = new JarFile(mod.jarPath.toFile())) {
+                    for (String className : mod.transformers) {
+                        if (className.isEmpty()) continue;
+                        String entryName = className.replace('.', '/');
+                        if (!entryName.endsWith(".class")) entryName += ".class";
+                        try (InputStream in = jar.getInputStream(jar.getEntry(entryName))) {
+                            byte[] bytes = in.readAllBytes();
+                            transformersBytes.put(className, () -> bytes);
+                            transformerManager.addTransformer(className);
+                        }
+                    }
                 }
             }
-        } catch (IOException e) {
-            e.printStackTrace();
+        } catch (Exception e) {
+            e.printStackTrace(Logger.STDOUT);
         }
     }
 
@@ -157,7 +202,7 @@ public class Loader {
 
         for (String targetClassName : parsed.editClassTarget) {
             for (AnnotationParser.ParsedMethod method : parsed.methods) {
-                injectionPoints.computeIfAbsent(targetClassName, k -> new ArrayList<>())
+                injectionPoints.computeIfAbsent(targetClassName, _ -> new ArrayList<>())
                         .add(new InjectionPoint(
                                 method.inject,
                                 targetClassName,
@@ -177,10 +222,17 @@ public class Loader {
     }
 
     public record ModInfo(String id, String name, String version, String creator,
-                          String description, String license, List<String> injections, Path jarPath) {
+                          String description, String license, List<String> injections,
+                          List<String> transformers, List<String> fields, Path jarPath) {
         @Override
         public String toString() {
             return name + " (" + id + ") " + version + " by " + creator;
+        }
+    }
+
+    static class ModLoadingError extends RuntimeException {
+        ModLoadingError(String message) {
+            super(message);
         }
     }
 

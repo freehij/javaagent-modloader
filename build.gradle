@@ -13,6 +13,7 @@ repositories {
 dependencies {
     implementation 'org.ow2.asm:asm:9.10.1'
     implementation 'org.ow2.asm:asm-commons:9.10.1'
+    implementation 'net.lenni0451.classtransform:core:1.15.1'
 }
 
 jar {
@@ -28,6 +29,7 @@ jar {
 shadowJar {
     relocate 'org.objectweb.asm', 'relocated.org.objectweb.asm'
     relocate 'org.objectweb.asm.commons', 'relocated.org.objectweb.asm.commons'
+    relocate 'net.lenni0451.classtransform', 'relocated.net.lenni0451.classtransform'
 }
 
 tasks.build.dependsOn tasks.shadowJar

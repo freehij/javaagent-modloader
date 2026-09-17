@@ -12,7 +12,8 @@ import java.nio.file.Path;
 import java.util.Collection;
 
 @SuppressWarnings("unchecked")
-@EditClass("net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider")
+@EditClass({"net/fabricmc/loader/impl/game/minecraft/MinecraftGameProvider",
+        "org/quiltmc/loader/impl/game/minecraft/MinecraftGameProvider"})
 public class KnotClassPathFixer {
     @Inject(method = "locateGame", argMode = ArgMode.NONE)
     public static void locateGame(InjectionHelper helper) throws Exception {

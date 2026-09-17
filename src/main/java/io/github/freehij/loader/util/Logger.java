@@ -13,20 +13,36 @@ public class Logger {
     public static final PrintStream STDOUT = new PrintStream(
             new FileOutputStream(FileDescriptor.out), true, StandardCharsets.UTF_8
     );
+    static final StackWalker WALKER =
+            StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE);
+    static final String LOGGER_CLASS = Logger.class.getName();
+
+    static Object resolveSrc(Object src) {
+        if (src != null) return src;
+        return WALKER.walk(frames -> frames
+                .filter(f -> !LOGGER_CLASS.equals(f.getClassName()))
+                .findFirst()
+                .map(f -> (Object) f.getClassName())
+                .orElse("Unknown"));
+    }
+
+    public static void write(String message, Object src) {
+        STDOUT.println("[" + dateFormat.format(new Date()) + "] [" + resolveSrc(src) + "] " + message);
+    }
 
     public static void info(String message, Object src) {
-        STDOUT.println("[" + dateFormat.format(new Date()) + "] [" + src + "] " + message);
+        write(message, src);
     }
 
     public static void info(String message) {
-        info(message, "Unknown");
+        write(message, null);
     }
 
     public static void debug(String message, Object src) {
-        if (DEBUG) STDOUT.println("[" + dateFormat.format(new Date()) + "] [" + src + "] " + message);
+        if (DEBUG) write(message, src);
     }
 
     public static void debug(String message) {
-        debug(message, "Unknown");
+        if (DEBUG) write(message, null);
     }
 }
