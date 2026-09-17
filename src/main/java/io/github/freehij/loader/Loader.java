@@ -202,7 +202,7 @@ public class Loader {
 
         for (String targetClassName : parsed.editClassTarget) {
             for (AnnotationParser.ParsedMethod method : parsed.methods) {
-                injectionPoints.computeIfAbsent(targetClassName, _ -> new ArrayList<>())
+                injectionPoints.computeIfAbsent(targetClassName, k -> new ArrayList<>())
                         .add(new InjectionPoint(
                                 method.inject,
                                 targetClassName,
