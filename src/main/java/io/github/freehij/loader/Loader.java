@@ -414,7 +414,7 @@ public class Loader {
 
         @Override
         public void visitMaxs(int maxStack, int maxLocals) {
-            super.visitMaxs(Math.max(maxStack, 10), Math.max(maxLocals, 101));
+            super.visitMaxs(Math.max(maxStack, 10), Math.max(maxLocals, 102));
         }
 
         void handleInjection(AdvancedAt.At type, int currentCount, Predicate<AdvancedAt> extraMatcher,
@@ -457,6 +457,12 @@ public class Loader {
     static void generateHelperCall(MethodVisitor mv, int access, String desc, InjectionPoint injection,
                                    String className) {
         boolean isStatic = (access & Opcodes.ACC_STATIC) != 0;
+        Type returnType = Type.getReturnType(desc);
+        boolean hasReturnValue = injection.inject.at() == At.RETURN && returnType != Type.VOID_TYPE;
+        int returnLocal = 101;
+        if (hasReturnValue) {
+            mv.visitVarInsn(returnType.getOpcode(Opcodes.ISTORE), returnLocal);
+        }
 
         mv.visitTypeInsn(Opcodes.NEW, "io/github/freehij/loader/util/InjectionHelper");
         mv.visitInsn(Opcodes.DUP);
@@ -507,6 +513,18 @@ public class Loader {
                 false);
 
         mv.visitVarInsn(Opcodes.ASTORE, 100);
+
+        if (hasReturnValue) {
+            mv.visitVarInsn(Opcodes.ALOAD, 100);
+            mv.visitVarInsn(returnType.getOpcode(Opcodes.ILOAD), returnLocal);
+            boxElement(mv, returnType);
+            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                    "io/github/freehij/loader/util/InjectionHelper",
+                    "setReturnValue",
+                    "(Ljava/lang/Object;)V",
+                    false);
+        }
+
         mv.visitVarInsn(Opcodes.ALOAD, 100);
         mv.visitMethodInsn(Opcodes.INVOKESTATIC,
                 injection.handlerClass,
@@ -567,7 +585,6 @@ public class Loader {
                 "io/github/freehij/loader/util/InjectionHelper", "isCancelled", "()Z", false);
         mv.visitJumpInsn(Opcodes.IFEQ, continueLabel);
 
-        Type returnType = Type.getReturnType(desc);
         if (returnType == Type.VOID_TYPE) {
             mv.visitInsn(Opcodes.RETURN);
         } else {
@@ -580,6 +597,9 @@ public class Loader {
 
         mv.visitLabel(continueLabel);
         mv.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+        if (hasReturnValue) {
+            mv.visitVarInsn(returnType.getOpcode(Opcodes.ILOAD), returnLocal);
+        }
     }
 
     static void boxElement(MethodVisitor mv, Type type) {
