@@ -147,7 +147,7 @@ public class Loader {
                             throw new ModLoadingError("Missing required fields in mod.properties for " + jarPath);
                         if (name == null || name.trim().isEmpty()) name = modid;
                         ModInfo mod = new ModInfo(
-                                modid,
+                                modid.toLowerCase(),
                                 name,
                                 version,
                                 props.getProperty("creator", "-"),
