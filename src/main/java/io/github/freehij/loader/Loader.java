@@ -113,7 +113,7 @@ public class Loader {
                 "No license",
                 new ArrayList<>(),
                 new ArrayList<>(),
-                new ArrayList<>(),
+                new HashMap<>(),
                 null
         ));
         loadMods();
@@ -137,17 +137,15 @@ public class Loader {
                         if (config == null) continue;
                         Properties props = new Properties();
                         props.load(jar.getInputStream(config));
-                        ArrayList<String> fields = new ArrayList<>(props.stringPropertyNames());
+                        Map<String, String> fields = new HashMap<>();
+                        for (String key : props.stringPropertyNames()) fields.put(key, props.getProperty(key));
                         String modid = props.getProperty("modid");
                         String name = props.getProperty("name");
                         String version = props.getProperty("version");
                         if (modid == null || modid.trim().isEmpty() ||
-                                version == null || version.trim().isEmpty()) {
+                                version == null || version.trim().isEmpty())
                             throw new ModLoadingError("Missing required fields in mod.properties for " + jarPath);
-                        }
-                        if (name == null || name.trim().isEmpty()) {
-                            name = modid;
-                        }
+                        if (name == null || name.trim().isEmpty()) name = modid;
                         ModInfo mod = new ModInfo(
                                 modid,
                                 name,
@@ -223,7 +221,7 @@ public class Loader {
 
     public record ModInfo(String id, String name, String version, String creator,
                           String description, String license, List<String> injections,
-                          List<String> transformers, List<String> fields, Path jarPath) {
+                          List<String> transformers, Map<String, String> fields, Path jarPath) {
         @Override
         public String toString() {
             return name + " (" + id + ") " + version + " by " + creator;
