@@ -54,6 +54,8 @@ public class Loader {
 
     public static void premain(String args, Instrumentation inst) {
         defineMods();
+        processInjectionClass("io/github/freehij/injections/PaperclipClassPathFixer",
+                Thread.currentThread().getContextClassLoader());
         processInjectionClass("io/github/freehij/injections/VanillaServerClassPathFixer",
                 Thread.currentThread().getContextClassLoader());
         if (hasFabricOrQuilt()) {
