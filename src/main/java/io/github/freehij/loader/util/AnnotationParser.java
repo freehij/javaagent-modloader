@@ -1,6 +1,8 @@
 package io.github.freehij.loader.util;
 
+import io.github.freehij.loader.annotation.Definalize;
 import io.github.freehij.loader.annotation.Inject;
+import io.github.freehij.loader.constant.FailStrategy;
 import org.objectweb.asm.*;
 
 import java.io.IOException;
@@ -17,17 +19,30 @@ import java.util.function.Consumer;
 public class AnnotationParser {
     public static ParsedClass parseClassForInjections(String className, ClassLoader loader) {
         ClassData data = parseClass(className, loader);
-        if (data == null || data.editClassTarget == null || data.editClassTarget.length == 0) {
-            return new ParsedClass(null, Collections.emptyList());
+        if (data == null) {
+            return new ParsedClass(null, Collections.emptyList(), Collections.emptyList());
         }
+
+        String[] editClassTarget = (data.editClassTarget != null && data.editClassTarget.length > 0)
+                ? data.editClassTarget : null;
 
         List<ParsedMethod> methods = new ArrayList<>();
-        for (Map.Entry<String, AnnotationData> entry : data.injectAnnotations.entrySet()) {
-            Inject injectProxy = createAnnotationProxy(Inject.class, entry.getValue(), loader);
-            methods.add(new ParsedMethod(entry.getKey(), injectProxy));
+        if (editClassTarget != null) {
+            for (Map.Entry<String, AnnotationData> entry : data.injectAnnotations.entrySet()) {
+                Inject injectProxy = createAnnotationProxy(Inject.class, entry.getValue(), loader);
+                methods.add(new ParsedMethod(entry.getKey(), injectProxy));
+            }
         }
 
-        return new ParsedClass(data.editClassTarget, methods);
+        List<ParsedDefinalize> definalizes = new ArrayList<>();
+        if (data.definalizeData != null) {
+            Definalize definalizeProxy = createAnnotationProxy(Definalize.class, data.definalizeData, loader);
+            for (Definalize.Field field : definalizeProxy.value()) {
+                definalizes.add(new ParsedDefinalize(field.owner(), field.names(), field.failStrategy()));
+            }
+        }
+
+        return new ParsedClass(editClassTarget, methods, definalizes);
     }
 
     static ClassData parseClass(String className, ClassLoader loader) {
@@ -44,6 +59,7 @@ public class AnnotationParser {
 
     static class ClassVisitorImpl extends ClassVisitor {
         String[] editClassValues;
+        AnnotationData definalizeData;
         final Map<String, AnnotationData> injectAnnotations = new HashMap<>();
 
         ClassVisitorImpl() { super(Opcodes.ASM9); }
@@ -61,6 +77,9 @@ public class AnnotationParser {
                         editClassValues = sa;
                     }
                 });
+            }
+            if (descriptor.equals("Lio/github/freehij/loader/annotation/Definalize;")) {
+                return new ValueCollector(values -> definalizeData = new AnnotationData(descriptor, values));
             }
             return null;
         }
@@ -80,7 +99,7 @@ public class AnnotationParser {
         }
 
         ClassData getData() {
-            return new ClassData(editClassValues, injectAnnotations);
+            return new ClassData(editClassValues, injectAnnotations, definalizeData);
         }
     }
 
@@ -138,7 +157,8 @@ public class AnnotationParser {
         }
     }
 
-    record ClassData(String[] editClassTarget, Map<String, AnnotationData> injectAnnotations) { }
+    record ClassData(String[] editClassTarget, Map<String, AnnotationData> injectAnnotations,
+                     AnnotationData definalizeData) { }
 
     record AnnotationData(String descriptor, Map<String, Object> attributes) { }
 
@@ -318,10 +338,12 @@ public class AnnotationParser {
     public static class ParsedClass {
         public final String[] editClassTarget;
         public final List<ParsedMethod> methods;
+        public final List<ParsedDefinalize> definalizes;
 
-        ParsedClass(String[] editClassTarget, List<ParsedMethod> methods) {
+        ParsedClass(String[] editClassTarget, List<ParsedMethod> methods, List<ParsedDefinalize> definalizes) {
             this.editClassTarget = editClassTarget;
             this.methods = methods;
+            this.definalizes = definalizes;
         }
     }
 
@@ -332,6 +354,18 @@ public class AnnotationParser {
         ParsedMethod(String name, Inject inject) {
             this.name = name;
             this.inject = inject;
+        }
+    }
+
+    public static class ParsedDefinalize {
+        public final String owner;
+        public final String[] names;
+        public final FailStrategy failStrategy;
+
+        ParsedDefinalize(String owner, String[] names, FailStrategy failStrategy) {
+            this.owner = owner;
+            this.names = names;
+            this.failStrategy = failStrategy;
         }
     }
 }

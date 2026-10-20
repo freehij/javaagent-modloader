@@ -33,6 +33,7 @@ import java.util.jar.JarFile;
 public class Loader {
     static final String VERSION = "a1.0.0";
     static final Map<String, List<InjectionPoint>> injectionPoints = new HashMap<>();
+    static final Map<String, List<DefinalizePoint>> definalizedFields = new HashMap<>();
     static final Map<String, Supplier<byte[]>> transformersBytes = new HashMap<>();
     static final List<ModInfo> mods = new ArrayList<>();
     static final List<URL> modUrls = new ArrayList<>();
@@ -42,7 +43,7 @@ public class Loader {
         @Override
         public byte[] getClass(String name) throws ClassNotFoundException {
             Supplier<byte[]> bytes = transformersBytes.get(name);
-            if (bytes == null) throw new ClassNotFoundException("Class " + name +" not found.");
+            if (bytes == null) throw new ClassNotFoundException("Class " + name + " not found.");
             return bytes.get();
         }
 
@@ -198,18 +199,22 @@ public class Loader {
 
     static void processInjectionClass(String className, ClassLoader loader) {
         AnnotationParser.ParsedClass parsed = AnnotationParser.parseClassForInjections(className, loader);
-        if (parsed.editClassTarget == null) return;
-
-        for (String targetClassName : parsed.editClassTarget) {
-            for (AnnotationParser.ParsedMethod method : parsed.methods) {
-                injectionPoints.computeIfAbsent(targetClassName, k -> new ArrayList<>())
-                        .add(new InjectionPoint(
-                                method.inject,
-                                targetClassName,
-                                className,
-                                method.name
-                        ));
+        if (parsed.editClassTarget != null) {
+            for (String targetClassName : parsed.editClassTarget) {
+                for (AnnotationParser.ParsedMethod method : parsed.methods) {
+                    injectionPoints.computeIfAbsent(targetClassName, k -> new ArrayList<>())
+                            .add(new InjectionPoint(
+                                    method.inject,
+                                    targetClassName,
+                                    className,
+                                    method.name
+                            ));
+                }
             }
+        }
+        for (AnnotationParser.ParsedDefinalize definalize : parsed.definalizes) {
+            definalizedFields.computeIfAbsent(definalize.owner, k -> new ArrayList<>())
+                    .add(new DefinalizePoint(definalize.names, definalize.failStrategy, className));
         }
     }
 
@@ -254,10 +259,33 @@ public class Loader {
         }
     }
 
+    static class DefinalizePoint {
+        final String[] names;
+        final FailStrategy failStrategy;
+        final String handlerClass;
+        final Set<String> satisfied = new HashSet<>();
+
+        public DefinalizePoint(String[] names, FailStrategy failStrategy, String handlerClass) {
+            this.names = names;
+            this.failStrategy = failStrategy;
+            this.handlerClass = handlerClass;
+        }
+
+        boolean contains(String name) {
+            for (String n : names) if (n.equals(name)) return true;
+            return false;
+        }
+
+        @Override
+        public String toString() {
+            return handlerClass + " definalize " + Arrays.toString(names);
+        }
+    }
+
     static class Transformer implements ClassFileTransformer {
         @Override
         public byte[] transform(ClassLoader l, String className, Class<?> c, ProtectionDomain d, byte[] buffer) {
-            if (!injectionPoints.containsKey(className)) return null;
+            if (!injectionPoints.containsKey(className) && !definalizedFields.containsKey(className)) return null;
             Logger.debug("Loading " + className + ", loader: " + l.getName(), this);
             ClassReader cr = new ClassReader(buffer);
             ClassWriter cw = new ClassWriter(cr, ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
@@ -269,11 +297,30 @@ public class Loader {
     static class InjectionClassVisitor extends ClassVisitor {
         final String className;
         final List<InjectionPoint> points;
+        final List<DefinalizePoint> definalizePoints;
 
         InjectionClassVisitor(ClassVisitor cv, String className) {
             super(Opcodes.ASM9, cv);
             this.className = className;
             points = injectionPoints.get(className);
+            definalizePoints = definalizedFields.get(className);
+        }
+
+        @Override
+        public FieldVisitor visitField(int access, String name, String descriptor, String signature, Object value) {
+            if (definalizePoints != null) {
+                boolean matched = false;
+                for (DefinalizePoint point : definalizePoints) {
+                    if (point.contains(name)) {
+                        matched = true;
+                        point.satisfied.add(name);
+                    }
+                }
+                if (matched) {
+                    access &= ~Opcodes.ACC_FINAL;
+                }
+            }
+            return super.visitField(access, name, descriptor, signature, value);
         }
 
         @Override
@@ -294,13 +341,27 @@ public class Loader {
 
         @Override
         public void visitEnd() {
-            for (InjectionPoint point : points) {
-                if (point.satisfied) continue;
-                FailStrategy failStrategy = point.inject.failStrategy();
-                if (failStrategy.ordinal() > 0) {
-                    new NoSuchMethodException("Couldn't find a method required to satisfy " + point)
-                            .printStackTrace(Logger.STDOUT);
-                    if (failStrategy == FailStrategy.HARD) System.exit(2);
+            if (points != null) {
+                for (InjectionPoint point : points) {
+                    if (point.satisfied) continue;
+                    FailStrategy failStrategy = point.inject.failStrategy();
+                    if (failStrategy.ordinal() > 0) {
+                        new NoSuchMethodException("Couldn't find a method required to satisfy " + point)
+                                .printStackTrace(Logger.STDOUT);
+                        if (failStrategy == FailStrategy.HARD) System.exit(2);
+                    }
+                }
+            }
+            if (definalizePoints != null) {
+                for (DefinalizePoint point : definalizePoints) {
+                    for (String name : point.names) {
+                        if (point.satisfied.contains(name)) continue;
+                        if (point.failStrategy.ordinal() > 0) {
+                            new NoSuchFieldException("Couldn't find field '" + name + "' required to satisfy " + point)
+                                    .printStackTrace(Logger.STDOUT);
+                            if (point.failStrategy == FailStrategy.HARD) System.exit(2);
+                        }
+                    }
                 }
             }
         }
