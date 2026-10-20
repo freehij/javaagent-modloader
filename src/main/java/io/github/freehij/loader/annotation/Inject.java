@@ -25,4 +25,5 @@ public @interface Inject {
      */
     int priority() default 500;
     FailStrategy failStrategy() default FailStrategy.NOTIFY;
+    boolean dumpLocals() default false;
 }

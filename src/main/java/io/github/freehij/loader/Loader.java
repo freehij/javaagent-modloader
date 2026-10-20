@@ -288,22 +288,55 @@ public class Loader {
             if (!injectionPoints.containsKey(className) && !definalizedFields.containsKey(className)) return null;
             Logger.debug("Loading " + className + ", loader: " + l.getName(), this);
             ClassReader cr = new ClassReader(buffer);
+            Map<String, Map<Integer, LocalVarInfo>> localInfo = Collections.emptyMap();
+            List<InjectionPoint> points = injectionPoints.get(className);
+            if (points != null) {
+                for (InjectionPoint point : points) {
+                    if (point.inject.dumpLocals()) {
+                        localInfo = collectLocalVariableInfo(cr);
+                        break;
+                    }
+                }
+            }
             ClassWriter cw = new ClassWriter(cr, ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
-            cr.accept(new InjectionClassVisitor(cw, className), 0);
+            cr.accept(new InjectionClassVisitor(cw, className, localInfo), 0);
             return cw.toByteArray();
         }
+    }
+
+    static Map<String, Map<Integer, LocalVarInfo>> collectLocalVariableInfo(ClassReader cr) {
+        Map<String, Map<Integer, LocalVarInfo>> result = new HashMap<>();
+        cr.accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String desc, String sig, String[] ex) {
+                Map<Integer, LocalVarInfo> locals = result.computeIfAbsent(name + desc, k -> new HashMap<>());
+                return new MethodVisitor(Opcodes.ASM9) {
+                    @Override
+                    public void visitLocalVariable(String lname, String ldesc, String lsig,
+                                                   Label start, Label end, int index) {
+                        locals.put(index, new LocalVarInfo(lname, ldesc));
+                    }
+                };
+            }
+        }, ClassReader.SKIP_FRAMES);
+        return result;
+    }
+
+    record LocalVarInfo(String name, String descriptor) {
     }
 
     static class InjectionClassVisitor extends ClassVisitor {
         final String className;
         final List<InjectionPoint> points;
         final List<DefinalizePoint> definalizePoints;
+        final Map<String, Map<Integer, LocalVarInfo>> localInfo;
 
-        InjectionClassVisitor(ClassVisitor cv, String className) {
+        InjectionClassVisitor(ClassVisitor cv, String className, Map<String, Map<Integer, LocalVarInfo>> localInfo) {
             super(Opcodes.ASM9, cv);
             this.className = className;
             points = injectionPoints.get(className);
             definalizePoints = definalizedFields.get(className);
+            this.localInfo = localInfo;
         }
 
         @Override
@@ -327,13 +360,14 @@ public class Loader {
         public MethodVisitor visitMethod(int access, String name, String desc, String sig, String[] ex) {
             MethodVisitor mv = super.visitMethod(access, name, desc, sig, ex);
             if (points == null) return mv;
+            Map<Integer, LocalVarInfo> methodLocals = localInfo.get(name + desc);
             for (InjectionPoint point : points) {
                 if (Arrays.asList(point.inject.method()).contains(name) &&
                         (point.inject.descriptor().isEmpty() || point.inject.descriptor().equals(desc))) {
                     Logger.debug("Transforming " + name + desc +
                             ", handler: " + point.handlerClass + "." + point.handlerMethod, this);
                     point.satisfied = true;
-                    mv = new InjectionMethodVisitor(mv, access, desc, point, this.className);
+                    mv = new InjectionMethodVisitor(mv, access, desc, point, this.className, methodLocals);
                 }
             }
             return mv;
@@ -373,18 +407,24 @@ public class Loader {
         final String methodDesc, className;
         boolean hasReturned, inInjection;
         int localStoreCount, fieldStoreCount, invokeCount, localLoadCount, fieldLoadCount;
+        final Set<Integer> initializedSlots = new HashSet<>();
+        final Map<Integer, String> slotTypes = new HashMap<>();
+        final Map<Integer, LocalVarInfo> slotInfo;
 
-        InjectionMethodVisitor(MethodVisitor mv, int access, String desc, InjectionPoint injection, String className) {
+        InjectionMethodVisitor(MethodVisitor mv, int access, String desc, InjectionPoint injection, String className,
+                               Map<Integer, LocalVarInfo> slotInfo) {
             super(Opcodes.ASM9, mv);
             this.injection = injection;
             methodAccess = access;
             methodDesc = desc;
             this.className = className;
+            this.slotInfo = slotInfo != null ? slotInfo : Collections.emptyMap();
         }
 
         @Override
         public void visitCode() {
             super.visitCode();
+            initParameters();
             if (injection.inject.at() == At.HEAD) injectHelper();
         }
 
@@ -415,7 +455,11 @@ public class Loader {
             if (isStore) {
                 handleInjection(AdvancedAt.At.ASSIGN_LOCAL, localStoreCount,
                         adv -> adv.optional().isBlank() || var == Integer.parseInt(adv.optional().trim()),
-                        () -> super.visitVarInsn(opcode, var));
+                        () -> {
+                            super.visitVarInsn(opcode, var);
+                            initializedSlots.add(var);
+                            slotTypes.put(var, storeType(opcode, var));
+                        });
                 localStoreCount++;
             } else if (isLoad) {
                 handleInjection(AdvancedAt.At.FETCH_LOCAL, localLoadCount,
@@ -478,6 +522,35 @@ public class Loader {
             super.visitMaxs(Math.max(maxStack, 10), Math.max(maxLocals, 102));
         }
 
+        void initParameters() {
+            boolean isStatic = (methodAccess & Opcodes.ACC_STATIC) != 0;
+            int slot = 0;
+            if (!isStatic) {
+                initializedSlots.add(0);
+                slotTypes.put(0, "L" + className + ";");
+                slot = 1;
+            }
+            for (Type arg : Type.getArgumentTypes(methodDesc)) {
+                initializedSlots.add(slot);
+                slotTypes.put(slot, arg.getDescriptor());
+                slot += arg.getSize();
+            }
+        }
+
+        String storeType(int opcode, int var) {
+            return switch (opcode) {
+                case Opcodes.ISTORE -> "I";
+                case Opcodes.LSTORE -> "J";
+                case Opcodes.FSTORE -> "F";
+                case Opcodes.DSTORE -> "D";
+                case Opcodes.ASTORE -> {
+                    LocalVarInfo info = slotInfo.get(var);
+                    yield info != null ? info.descriptor() : "Ljava/lang/Object;";
+                }
+                default -> "?";
+            };
+        }
+
         void handleInjection(AdvancedAt.At type, int currentCount, Predicate<AdvancedAt> extraMatcher,
                              Runnable instruction) {
             processInjections(type, currentCount, extraMatcher, true);
@@ -509,9 +582,30 @@ public class Loader {
 
         void injectHelper() {
             if (inInjection) return;
+            if (injection.inject.dumpLocals()) dumpLocals();
             inInjection = true;
             generateHelperCall(this, methodAccess, methodDesc, injection, className);
             inInjection = false;
+        }
+
+        void dumpLocals() {
+            StringBuilder sb = new StringBuilder();
+            sb.append("dumpLocals ").append(injection)
+                    .append(" [").append(injection.inject.at()).append("] ")
+                    .append(methodDesc).append(':');
+            List<Integer> sorted = new ArrayList<>(initializedSlots);
+            Collections.sort(sorted);
+            if (sorted.isEmpty()) {
+                sb.append(" <none>");
+            } else {
+                for (int slot : sorted) {
+                    String type = slotTypes.get(slot);
+                    LocalVarInfo info = slotInfo.get(slot);
+                    sb.append("\n  slot ").append(slot).append(": ").append(type != null ? type : "?");
+                    if (info != null) sb.append("  ").append(info.name());
+                }
+            }
+            Logger.debug(sb.toString(), this);
         }
     }
 
