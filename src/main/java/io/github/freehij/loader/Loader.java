@@ -3,9 +3,11 @@ package io.github.freehij.loader;
 import io.github.freehij.loader.annotation.AdvancedAt;
 import io.github.freehij.loader.annotation.Inject;
 import io.github.freehij.loader.annotation.Local;
+import io.github.freehij.loader.constant.AccessMode;
 import io.github.freehij.loader.constant.ArgMode;
 import io.github.freehij.loader.constant.At;
 import io.github.freehij.loader.constant.FailStrategy;
+import io.github.freehij.loader.constant.FinalMode;
 import io.github.freehij.loader.constant.Shift;
 import io.github.freehij.loader.util.AnnotationParser;
 import io.github.freehij.loader.util.Logger;
@@ -33,7 +35,7 @@ import java.util.jar.JarFile;
 public class Loader {
     static final String VERSION = "a1.0.0";
     static final Map<String, List<InjectionPoint>> injectionPoints = new HashMap<>();
-    static final Map<String, List<DefinalizePoint>> definalizedFields = new HashMap<>();
+    static final Map<String, List<FieldFlagsPoint>> fieldFlags = new HashMap<>();
     static final Map<String, Supplier<byte[]>> transformersBytes = new HashMap<>();
     static final List<ModInfo> mods = new ArrayList<>();
     static final List<URL> modUrls = new ArrayList<>();
@@ -212,9 +214,10 @@ public class Loader {
                 }
             }
         }
-        for (AnnotationParser.ParsedDefinalize definalize : parsed.definalizes) {
-            definalizedFields.computeIfAbsent(definalize.owner, k -> new ArrayList<>())
-                    .add(new DefinalizePoint(definalize.names, definalize.failStrategy, className));
+        for (AnnotationParser.ParsedFieldFlags parsedFlag : parsed.fieldFlags) {
+            fieldFlags.computeIfAbsent(parsedFlag.owner, k -> new ArrayList<>())
+                    .add(new FieldFlagsPoint(parsedFlag.names, parsedFlag.access, parsedFlag.finalMode,
+                            parsedFlag.failStrategy, className));
         }
     }
 
@@ -259,14 +262,19 @@ public class Loader {
         }
     }
 
-    static class DefinalizePoint {
+    static class FieldFlagsPoint {
         final String[] names;
+        final AccessMode access;
+        final FinalMode finalMode;
         final FailStrategy failStrategy;
         final String handlerClass;
         final Set<String> satisfied = new HashSet<>();
 
-        public DefinalizePoint(String[] names, FailStrategy failStrategy, String handlerClass) {
+        public FieldFlagsPoint(String[] names, AccessMode access, FinalMode finalMode,
+                               FailStrategy failStrategy, String handlerClass) {
             this.names = names;
+            this.access = access;
+            this.finalMode = finalMode;
             this.failStrategy = failStrategy;
             this.handlerClass = handlerClass;
         }
@@ -278,14 +286,16 @@ public class Loader {
 
         @Override
         public String toString() {
-            return handlerClass + " definalize " + Arrays.toString(names);
+            return handlerClass + " fieldFlags " + Arrays.toString(names);
         }
     }
+
+    record LocalVarInfo(String name, String descriptor) { }
 
     static class Transformer implements ClassFileTransformer {
         @Override
         public byte[] transform(ClassLoader l, String className, Class<?> c, ProtectionDomain d, byte[] buffer) {
-            if (!injectionPoints.containsKey(className) && !definalizedFields.containsKey(className)) return null;
+            if (!injectionPoints.containsKey(className) && !fieldFlags.containsKey(className)) return null;
             Logger.debug("Loading " + className + ", loader: " + l.getName(), this);
             ClassReader cr = new ClassReader(buffer);
             Map<String, Map<Integer, LocalVarInfo>> localInfo = Collections.emptyMap();
@@ -322,35 +332,51 @@ public class Loader {
         return result;
     }
 
-    record LocalVarInfo(String name, String descriptor) {
-    }
-
     static class InjectionClassVisitor extends ClassVisitor {
         final String className;
         final List<InjectionPoint> points;
-        final List<DefinalizePoint> definalizePoints;
+        final List<FieldFlagsPoint> fieldFlagsPoints;
         final Map<String, Map<Integer, LocalVarInfo>> localInfo;
 
         InjectionClassVisitor(ClassVisitor cv, String className, Map<String, Map<Integer, LocalVarInfo>> localInfo) {
             super(Opcodes.ASM9, cv);
             this.className = className;
             points = injectionPoints.get(className);
-            definalizePoints = definalizedFields.get(className);
+            fieldFlagsPoints = fieldFlags.get(className);
             this.localInfo = localInfo;
         }
 
         @Override
         public FieldVisitor visitField(int access, String name, String descriptor, String signature, Object value) {
-            if (definalizePoints != null) {
-                boolean matched = false;
-                for (DefinalizePoint point : definalizePoints) {
-                    if (point.contains(name)) {
-                        matched = true;
-                        point.satisfied.add(name);
+            if (fieldFlagsPoints != null) {
+                for (FieldFlagsPoint point : fieldFlagsPoints) {
+                    if (!point.contains(name)) continue;
+                    point.satisfied.add(name);
+                    if (point.finalMode == FinalMode.NON_FINAL) {
+                        access &= ~Opcodes.ACC_FINAL;
+                    } else if (point.finalMode == FinalMode.FINAL) {
+                        access |= Opcodes.ACC_FINAL;
                     }
-                }
-                if (matched) {
-                    access &= ~Opcodes.ACC_FINAL;
+                    switch (point.access) {
+                        case PUBLIC:
+                            access &= ~(Opcodes.ACC_PRIVATE | Opcodes.ACC_PROTECTED);
+                            access |= Opcodes.ACC_PUBLIC;
+                            break;
+                        case PROTECTED:
+                            access &= ~(Opcodes.ACC_PRIVATE | Opcodes.ACC_PUBLIC);
+                            access |= Opcodes.ACC_PROTECTED;
+                            break;
+                        case PRIVATE:
+                            access &= ~(Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED);
+                            access |= Opcodes.ACC_PRIVATE;
+                            break;
+                        case PACKAGE_PRIVATE:
+                            access &= ~(Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED | Opcodes.ACC_PRIVATE);
+                            break;
+                        case KEEP:
+                        default:
+                            break;
+                    }
                 }
             }
             return super.visitField(access, name, descriptor, signature, value);
@@ -386,8 +412,8 @@ public class Loader {
                     }
                 }
             }
-            if (definalizePoints != null) {
-                for (DefinalizePoint point : definalizePoints) {
+            if (fieldFlagsPoints != null) {
+                for (FieldFlagsPoint point : fieldFlagsPoints) {
                     for (String name : point.names) {
                         if (point.satisfied.contains(name)) continue;
                         if (point.failStrategy.ordinal() > 0) {

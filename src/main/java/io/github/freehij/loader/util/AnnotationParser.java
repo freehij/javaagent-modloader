@@ -1,8 +1,10 @@
 package io.github.freehij.loader.util;
 
-import io.github.freehij.loader.annotation.Definalize;
+import io.github.freehij.loader.annotation.FieldFlags;
 import io.github.freehij.loader.annotation.Inject;
+import io.github.freehij.loader.constant.AccessMode;
 import io.github.freehij.loader.constant.FailStrategy;
+import io.github.freehij.loader.constant.FinalMode;
 import org.objectweb.asm.*;
 
 import java.io.IOException;
@@ -34,15 +36,16 @@ public class AnnotationParser {
             }
         }
 
-        List<ParsedDefinalize> definalizes = new ArrayList<>();
-        if (data.definalizeData != null) {
-            Definalize definalizeProxy = createAnnotationProxy(Definalize.class, data.definalizeData, loader);
-            for (Definalize.Field field : definalizeProxy.value()) {
-                definalizes.add(new ParsedDefinalize(field.owner(), field.names(), field.failStrategy()));
+        List<ParsedFieldFlags> fieldFlags = new ArrayList<>();
+        if (data.fieldFlagsData != null) {
+            FieldFlags fieldFlagsProxy = createAnnotationProxy(FieldFlags.class, data.fieldFlagsData, loader);
+            for (FieldFlags.Field field : fieldFlagsProxy.value()) {
+                fieldFlags.add(new ParsedFieldFlags(field.owner(), field.names(), field.access(),
+                        field.finalMode(), field.failStrategy()));
             }
         }
 
-        return new ParsedClass(editClassTarget, methods, definalizes);
+        return new ParsedClass(editClassTarget, methods, fieldFlags);
     }
 
     static ClassData parseClass(String className, ClassLoader loader) {
@@ -59,7 +62,7 @@ public class AnnotationParser {
 
     static class ClassVisitorImpl extends ClassVisitor {
         String[] editClassValues;
-        AnnotationData definalizeData;
+        AnnotationData fieldFlagsData;
         final Map<String, AnnotationData> injectAnnotations = new HashMap<>();
 
         ClassVisitorImpl() { super(Opcodes.ASM9); }
@@ -78,8 +81,8 @@ public class AnnotationParser {
                     }
                 });
             }
-            if (descriptor.equals("Lio/github/freehij/loader/annotation/Definalize;")) {
-                return new ValueCollector(values -> definalizeData = new AnnotationData(descriptor, values));
+            if (descriptor.equals("Lio/github/freehij/loader/annotation/FieldFlags;")) {
+                return new ValueCollector(values -> fieldFlagsData = new AnnotationData(descriptor, values));
             }
             return null;
         }
@@ -99,7 +102,7 @@ public class AnnotationParser {
         }
 
         ClassData getData() {
-            return new ClassData(editClassValues, injectAnnotations, definalizeData);
+            return new ClassData(editClassValues, injectAnnotations, fieldFlagsData);
         }
     }
 
@@ -158,7 +161,7 @@ public class AnnotationParser {
     }
 
     record ClassData(String[] editClassTarget, Map<String, AnnotationData> injectAnnotations,
-                     AnnotationData definalizeData) { }
+                     AnnotationData fieldFlagsData) { }
 
     record AnnotationData(String descriptor, Map<String, Object> attributes) { }
 
@@ -338,12 +341,12 @@ public class AnnotationParser {
     public static class ParsedClass {
         public final String[] editClassTarget;
         public final List<ParsedMethod> methods;
-        public final List<ParsedDefinalize> definalizes;
+        public final List<ParsedFieldFlags> fieldFlags;
 
-        ParsedClass(String[] editClassTarget, List<ParsedMethod> methods, List<ParsedDefinalize> definalizes) {
+        ParsedClass(String[] editClassTarget, List<ParsedMethod> methods, List<ParsedFieldFlags> fieldFlags) {
             this.editClassTarget = editClassTarget;
             this.methods = methods;
-            this.definalizes = definalizes;
+            this.fieldFlags = fieldFlags;
         }
     }
 
@@ -357,14 +360,19 @@ public class AnnotationParser {
         }
     }
 
-    public static class ParsedDefinalize {
+    public static class ParsedFieldFlags {
         public final String owner;
         public final String[] names;
+        public final AccessMode access;
+        public final FinalMode finalMode;
         public final FailStrategy failStrategy;
 
-        ParsedDefinalize(String owner, String[] names, FailStrategy failStrategy) {
+        ParsedFieldFlags(String owner, String[] names, AccessMode access, FinalMode finalMode,
+                         FailStrategy failStrategy) {
             this.owner = owner;
             this.names = names;
+            this.access = access;
+            this.finalMode = finalMode;
             this.failStrategy = failStrategy;
         }
     }
