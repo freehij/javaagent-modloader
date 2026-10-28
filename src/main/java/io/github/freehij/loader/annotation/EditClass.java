@@ -8,5 +8,7 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.TYPE)
 public @interface EditClass {
-    String[] value();
+    String[] value() default {};
+    Class<?>[] targets() default {};
+    InterfaceSetup[] interfaces() default {};
 }

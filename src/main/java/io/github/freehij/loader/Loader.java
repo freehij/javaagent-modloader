@@ -3,13 +3,18 @@ package io.github.freehij.loader;
 import io.github.freehij.loader.annotation.AdvancedAt;
 import io.github.freehij.loader.annotation.Inject;
 import io.github.freehij.loader.annotation.Local;
+import io.github.freehij.loader.annotation.NotSpecified;
 import io.github.freehij.loader.constant.AccessMode;
 import io.github.freehij.loader.constant.ArgMode;
 import io.github.freehij.loader.constant.At;
 import io.github.freehij.loader.constant.FailStrategy;
 import io.github.freehij.loader.constant.FinalMode;
+import io.github.freehij.loader.constant.InterfaceOperation;
 import io.github.freehij.loader.constant.Shift;
 import io.github.freehij.loader.util.AnnotationParser;
+import io.github.freehij.loader.util.AnnotationParser.NFieldData;
+import io.github.freehij.loader.util.AnnotationParser.NLocalData;
+import io.github.freehij.loader.util.AnnotationParser.ParsedParameter;
 import io.github.freehij.loader.util.Logger;
 import net.lenni0451.classtransform.TransformerManager;
 import net.lenni0451.classtransform.utils.tree.IClassProvider;
@@ -36,6 +41,8 @@ public class Loader {
     static final String VERSION = "a1.0.0";
     static final Map<String, List<InjectionPoint>> injectionPoints = new HashMap<>();
     static final Map<String, List<FieldFlagsPoint>> fieldFlags = new HashMap<>();
+    static final Map<String, List<InterfaceSetupPoint>> interfaceSetups = new HashMap<>();
+    static final Map<String, Set<String>> handlerMethods = new HashMap<>();
     static final Map<String, Supplier<byte[]>> transformersBytes = new HashMap<>();
     static final List<ModInfo> mods = new ArrayList<>();
     static final List<URL> modUrls = new ArrayList<>();
@@ -99,7 +106,6 @@ public class Loader {
         return false;
     }
 
-    //had to use this class cuz FMLLoader doesn't work
     static boolean hasNeoForge() {
         try {
             Class.forName("net.neoforged.fml.startup.Client");
@@ -201,6 +207,10 @@ public class Loader {
 
     static void processInjectionClass(String className, ClassLoader loader) {
         AnnotationParser.ParsedClass parsed = AnnotationParser.parseClassForInjections(className, loader);
+        for (AnnotationParser.ParsedMethod method : parsed.methods) {
+            handlerMethods.computeIfAbsent(className, k -> new HashSet<>())
+                    .add(method.name + method.descriptor);
+        }
         if (parsed.editClassTarget != null) {
             for (String targetClassName : parsed.editClassTarget) {
                 for (AnnotationParser.ParsedMethod method : parsed.methods) {
@@ -209,8 +219,13 @@ public class Loader {
                                     method.inject,
                                     targetClassName,
                                     className,
-                                    method.name
+                                    method.name,
+                                    method.parameters
                             ));
+                }
+                for (AnnotationParser.ParsedInterfaceSetup setup : parsed.interfaceSetups) {
+                    interfaceSetups.computeIfAbsent(targetClassName, k -> new ArrayList<>())
+                            .add(new InterfaceSetupPoint(setup.targets, setup.operation));
                 }
             }
         }
@@ -247,13 +262,16 @@ public class Loader {
     static class InjectionPoint {
         final Inject inject;
         final String targetClass, handlerClass, handlerMethod;
+        final List<ParsedParameter> parameters;
         public boolean satisfied = false;
 
-        public InjectionPoint(Inject inject, String targetClass, String handlerClass, String handlerMethod) {
+        public InjectionPoint(Inject inject, String targetClass, String handlerClass, String handlerMethod,
+                              List<ParsedParameter> parameters) {
             this.inject = inject;
             this.targetClass = targetClass;
             this.handlerClass = handlerClass;
             this.handlerMethod = handlerMethod;
+            this.parameters = parameters;
         }
 
         @Override
@@ -290,13 +308,51 @@ public class Loader {
         }
     }
 
+    static class InterfaceSetupPoint {
+        final String[] targets;
+        final InterfaceOperation operation;
+
+        InterfaceSetupPoint(String[] targets, InterfaceOperation operation) {
+            this.targets = targets;
+            this.operation = operation;
+        }
+    }
+
     record LocalVarInfo(String name, String descriptor) { }
 
     static class Transformer implements ClassFileTransformer {
         @Override
         public byte[] transform(ClassLoader l, String className, Class<?> c, ProtectionDomain d, byte[] buffer) {
-            if (!injectionPoints.containsKey(className) && !fieldFlags.containsKey(className)) return null;
-            Logger.debug("Loading " + className + ", loader: " + l.getName(), this);
+            boolean isTarget = injectionPoints.containsKey(className) || fieldFlags.containsKey(className)
+                    || interfaceSetups.containsKey(className);
+            boolean isHandler = handlerMethods.containsKey(className);
+            if (!isTarget && !isHandler) return null;
+
+            byte[] result = buffer;
+            if (isHandler) result = publicizeHandlers(className, result);
+            if (isTarget) result = transformTarget(className, result);
+            return result;
+        }
+
+        static byte[] publicizeHandlers(String className, byte[] buffer) {
+            Set<String> methods = handlerMethods.get(className);
+            if (methods == null || methods.isEmpty()) return buffer;
+            ClassReader cr = new ClassReader(buffer);
+            ClassWriter cw = new ClassWriter(cr, 0);
+            cr.accept(new ClassVisitor(Opcodes.ASM9, cw) {
+                @Override
+                public MethodVisitor visitMethod(int access, String name, String desc, String sig, String[] ex) {
+                    if (methods.contains(name + desc)) {
+                        access = (access | Opcodes.ACC_PUBLIC) & ~(Opcodes.ACC_PRIVATE | Opcodes.ACC_PROTECTED);
+                    }
+                    return super.visitMethod(access, name, desc, sig, ex);
+                }
+            }, 0);
+            return cw.toByteArray();
+        }
+
+        static byte[] transformTarget(String className, byte[] buffer) {
+            Logger.debug("Loading " + className, Loader.class);
             ClassReader cr = new ClassReader(buffer);
             Map<String, Map<Integer, LocalVarInfo>> localInfo = Collections.emptyMap();
             List<InjectionPoint> points = injectionPoints.get(className);
@@ -308,8 +364,9 @@ public class Loader {
                     }
                 }
             }
+            Map<String, Boolean> fieldStaticness = collectStaticFields(cr);
             ClassWriter cw = new ClassWriter(cr, ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
-            cr.accept(new InjectionClassVisitor(cw, className, localInfo), 0);
+            cr.accept(new InjectionClassVisitor(cw, className, localInfo, fieldStaticness), 0);
             return cw.toByteArray();
         }
     }
@@ -332,18 +389,52 @@ public class Loader {
         return result;
     }
 
+    static Map<String, Boolean> collectStaticFields(ClassReader cr) {
+        Map<String, Boolean> result = new HashMap<>();
+        cr.accept(new ClassVisitor(Opcodes.ASM9) {
+            @Override
+            public FieldVisitor visitField(int access, String name, String descriptor, String sig, Object value) {
+                result.put(name, (access & Opcodes.ACC_STATIC) != 0);
+                return null;
+            }
+        }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        return result;
+    }
+
     static class InjectionClassVisitor extends ClassVisitor {
         final String className;
         final List<InjectionPoint> points;
         final List<FieldFlagsPoint> fieldFlagsPoints;
         final Map<String, Map<Integer, LocalVarInfo>> localInfo;
+        final Map<String, Boolean> fieldStaticness;
 
-        InjectionClassVisitor(ClassVisitor cv, String className, Map<String, Map<Integer, LocalVarInfo>> localInfo) {
+        InjectionClassVisitor(ClassVisitor cv, String className, Map<String, Map<Integer, LocalVarInfo>> localInfo,
+                              Map<String, Boolean> fieldStaticness) {
             super(Opcodes.ASM9, cv);
             this.className = className;
-            points = injectionPoints.get(className);
-            fieldFlagsPoints = fieldFlags.get(className);
+            this.points = injectionPoints.get(className);
+            this.fieldFlagsPoints = fieldFlags.get(className);
             this.localInfo = localInfo;
+            this.fieldStaticness = fieldStaticness;
+        }
+
+        @Override
+        public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+            List<InterfaceSetupPoint> setups = interfaceSetups.get(className);
+            if (setups != null && !setups.isEmpty()) {
+                List<String> ifaces = new ArrayList<>(Arrays.asList(interfaces));
+                for (InterfaceSetupPoint setup : setups) {
+                    for (String target : setup.targets) {
+                        if (setup.operation == InterfaceOperation.ADD) {
+                            if (!ifaces.contains(target)) ifaces.add(target);
+                        } else {
+                            ifaces.remove(target);
+                        }
+                    }
+                }
+                interfaces = ifaces.toArray(new String[0]);
+            }
+            super.visit(version, access, name, signature, superName, interfaces);
         }
 
         @Override
@@ -393,7 +484,8 @@ public class Loader {
                     Logger.debug("Transforming " + name + desc +
                             ", handler: " + point.handlerClass + "." + point.handlerMethod, this);
                     point.satisfied = true;
-                    mv = new InjectionMethodVisitor(mv, access, desc, point, this.className, methodLocals);
+                    mv = new InjectionMethodVisitor(mv, access, desc, point, className, methodLocals,
+                            fieldStaticness);
                 }
             }
             return mv;
@@ -424,6 +516,7 @@ public class Loader {
                     }
                 }
             }
+            super.visitEnd();
         }
     }
 
@@ -436,15 +529,17 @@ public class Loader {
         final Set<Integer> initializedSlots = new HashSet<>();
         final Map<Integer, String> slotTypes = new HashMap<>();
         final Map<Integer, LocalVarInfo> slotInfo;
+        final Map<String, Boolean> fieldStaticness;
 
         InjectionMethodVisitor(MethodVisitor mv, int access, String desc, InjectionPoint injection, String className,
-                               Map<Integer, LocalVarInfo> slotInfo) {
+                               Map<Integer, LocalVarInfo> slotInfo, Map<String, Boolean> fieldStaticness) {
             super(Opcodes.ASM9, mv);
             this.injection = injection;
             methodAccess = access;
             methodDesc = desc;
             this.className = className;
             this.slotInfo = slotInfo != null ? slotInfo : Collections.emptyMap();
+            this.fieldStaticness = fieldStaticness;
         }
 
         @Override
@@ -610,7 +705,7 @@ public class Loader {
             if (inInjection) return;
             if (injection.inject.dumpLocals()) dumpLocals();
             inInjection = true;
-            generateHelperCall(this, methodAccess, methodDesc, injection, className);
+            generateHelperCall(this, methodAccess, methodDesc, injection, className, fieldStaticness);
             inInjection = false;
         }
 
@@ -635,8 +730,54 @@ public class Loader {
         }
     }
 
+    static void loadParam(MethodVisitor mv, boolean isStatic, String className, ParsedParameter param,
+                          Map<String, Boolean> fieldStaticness) {
+        Type paramType = param.type;
+        if (param.nField != null) {
+            NFieldData nf = param.nField;
+            String fieldDesc = nf.typeDesc() != null ? nf.typeDesc() : paramType.getDescriptor();
+            Type fieldType = Type.getType(fieldDesc);
+            boolean fieldStatic = fieldStaticness.getOrDefault(nf.name(), false);
+            if (!fieldStatic) {
+                if (isStatic) {
+                    mv.visitInsn(Opcodes.ACONST_NULL);
+                } else {
+                    mv.visitVarInsn(Opcodes.ALOAD, 0);
+                }
+            }
+            mv.visitFieldInsn(fieldStatic ? Opcodes.GETSTATIC : Opcodes.GETFIELD, className, nf.name(), fieldDesc);
+            convertType(mv, fieldType, paramType);
+        } else if (param.nLocal != null) {
+            NLocalData nl = param.nLocal;
+            String localDesc = nl.typeDesc() != null ? nl.typeDesc() : paramType.getDescriptor();
+            Type localType = Type.getType(localDesc);
+            mv.visitVarInsn(localType.getOpcode(Opcodes.ILOAD), nl.index());
+            convertType(mv, localType, paramType);
+        }
+    }
+
+    static void convertType(MethodVisitor mv, Type from, Type to) {
+        if (from.equals(to)) return;
+        int fs = from.getSort(), ts = to.getSort();
+        if (fs == Type.OBJECT || fs == Type.ARRAY) {
+            if (ts == Type.OBJECT || ts == Type.ARRAY) {
+                mv.visitTypeInsn(Opcodes.CHECKCAST, to.getInternalName());
+            } else {
+                unbox(mv, to);
+            }
+        } else if (ts == Type.OBJECT || ts == Type.ARRAY) {
+            boxElement(mv, from);
+            if (ts != Type.OBJECT) mv.visitTypeInsn(Opcodes.CHECKCAST, to.getInternalName());
+        }
+    }
+
     static void generateHelperCall(MethodVisitor mv, int access, String desc, InjectionPoint injection,
-                                   String className) {
+                                   String className, Map<String, Boolean> fieldStaticness) {
+        if (!injection.inject.provideHelper()) {
+            generateDirectCall(mv, access, injection, className, fieldStaticness);
+            return;
+        }
+
         boolean isStatic = (access & Opcodes.ACC_STATIC) != 0;
         Type returnType = Type.getReturnType(desc);
         boolean hasReturnValue = injection.inject.at() == At.RETURN && returnType != Type.VOID_TYPE;
@@ -679,7 +820,7 @@ public class Loader {
                 Local local = locals[i];
                 mv.visitInsn(Opcodes.DUP);
                 mv.visitIntInsn(Opcodes.BIPUSH, i);
-                Type localType = Type.getType(local.type());
+                Type localType = resolveLocalType(local);
                 mv.visitVarInsn(localType.getOpcode(Opcodes.ILOAD), local.index());
                 boxElement(mv, localType);
                 mv.visitInsn(Opcodes.AASTORE);
@@ -707,10 +848,17 @@ public class Loader {
         }
 
         mv.visitVarInsn(Opcodes.ALOAD, 100);
+        List<Type> handlerTypes = new ArrayList<>();
+        handlerTypes.add(Type.getObjectType("io/github/freehij/loader/util/InjectionHelper"));
+        for (ParsedParameter param : injection.parameters) {
+            if (param.nField == null && param.nLocal == null) continue;
+            loadParam(mv, isStatic, className, param, fieldStaticness);
+            handlerTypes.add(param.type);
+        }
         mv.visitMethodInsn(Opcodes.INVOKESTATIC,
                 injection.handlerClass,
                 injection.handlerMethod,
-                "(Lio/github/freehij/loader/util/InjectionHelper;)V",
+                Type.getMethodDescriptor(Type.VOID_TYPE, handlerTypes.toArray(new Type[0])),
                 false);
 
         if (argTypes.length > 0 && injection.inject.argMode() == ArgMode.FETCH_APPLY) {
@@ -746,7 +894,7 @@ public class Loader {
                     false);
             for (int i = 0; i < locals.length; i++) {
                 Local local = locals[i];
-                Type localType = Type.getType(local.type());
+                Type localType = resolveLocalType(local);
                 mv.visitInsn(Opcodes.DUP);
                 mv.visitIntInsn(Opcodes.BIPUSH, i);
                 mv.visitInsn(Opcodes.AALOAD);
@@ -781,6 +929,35 @@ public class Loader {
         if (hasReturnValue) {
             mv.visitVarInsn(returnType.getOpcode(Opcodes.ILOAD), returnLocal);
         }
+    }
+
+    static Type resolveLocalType(Local local) {
+        String str = local.type();
+        if (!str.isEmpty()) {
+            String s = str.replace('.', '/');
+            if (s.length() == 1) return Type.getType(s);
+            if (s.startsWith("[")) return Type.getType(s);
+            if (s.startsWith("L") && s.endsWith(";")) return Type.getType(s);
+            return Type.getObjectType(s);
+        }
+        Class<?> c = local.typeClass();
+        if (c != NotSpecified.class) return Type.getType(c);
+        throw new IllegalArgumentException("@Local at index " + local.index() + " requires type or typeClass");
+    }
+
+    static void generateDirectCall(MethodVisitor mv, int access, InjectionPoint injection,
+                                   String className, Map<String, Boolean> fieldStaticness) {
+        boolean isStatic = (access & Opcodes.ACC_STATIC) != 0;
+        List<Type> paramTypes = new ArrayList<>();
+        for (ParsedParameter param : injection.parameters) {
+            loadParam(mv, isStatic, className, param, fieldStaticness);
+            paramTypes.add(param.type);
+        }
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC,
+                injection.handlerClass,
+                injection.handlerMethod,
+                Type.getMethodDescriptor(Type.VOID_TYPE, paramTypes.toArray(new Type[0])),
+                false);
     }
 
     static void boxElement(MethodVisitor mv, Type type) {

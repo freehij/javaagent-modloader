@@ -1,6 +1,7 @@
 package io.github.freehij.loader.annotation;
 
 import io.github.freehij.loader.annotation.notes.Experimental;
+import io.github.freehij.loader.annotation.notes.PrioritizedParameter;
 import io.github.freehij.loader.constant.AccessMode;
 import io.github.freehij.loader.constant.FailStrategy;
 import io.github.freehij.loader.constant.FinalMode;
@@ -19,7 +20,9 @@ public @interface FieldFlags {
     @Retention(RetentionPolicy.CLASS)
     @Target({})
     @interface Field {
-        String owner();
+        @PrioritizedParameter
+        String owner() default "";
+        Class<?> ownerClazz() default NotSpecified.class;
         String[] names();
         AccessMode access() default AccessMode.KEEP;
         FinalMode finalMode() default FinalMode.NON_FINAL;
